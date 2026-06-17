@@ -47,8 +47,12 @@ export interface MealFlags {
   lunch: boolean
 }
 
-/** Breakfast counts if block 1 worked; lunch counts if block 3 worked (§5). */
+/**
+ * Meal flags from the day's blocks (§6). Block 2 is required for ANY meal:
+ *   breakfast ⇔ blocks include BOTH 1 and 2; lunch ⇔ blocks include BOTH 2 and 3.
+ * So {1,2}→breakfast, {2,3}→lunch, {1,2,3}→both, and {1,3}→none.
+ */
 export function mealFlags(blocks: number[]): MealFlags {
   const set = new Set(normalizeBlocks(blocks))
-  return { breakfast: set.has(1), lunch: set.has(3) }
+  return { breakfast: set.has(1) && set.has(2), lunch: set.has(2) && set.has(3) }
 }

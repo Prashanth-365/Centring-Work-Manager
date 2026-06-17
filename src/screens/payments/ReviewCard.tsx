@@ -5,32 +5,31 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Field } from '@/components/Field'
-import {
-  assignTransaction,
-  createOtherExpenseType,
-  quickCreateBuilding,
-  quickCreateWorker,
-} from '@/lib/repo'
+import { assignTransaction, createOtherExpenseType, quickCreateWorker } from '@/lib/repo'
 import { SUBCATEGORY_FIELDS } from '@/lib/constants'
+import { byId, buildingName } from '@/lib/select'
 import { formatDate } from '@/lib/dates'
 import { money } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Building, Mold, OtherExpenseType, SyncedTransaction, Worker } from '@/lib/types'
+import type { Building, Mold, OtherExpenseType, Owner, SyncedTransaction, Worker } from '@/lib/types'
 
 export function ReviewCard({
   txn,
   buildings,
+  owners,
   workers,
   molds,
   otherTypes,
 }: {
   txn: SyncedTransaction
   buildings: Building[]
+  owners: Owner[]
   workers: Worker[]
   molds: Mold[]
   otherTypes: OtherExpenseType[]
 }) {
   const fields = SUBCATEGORY_FIELDS[txn.subCategory] ?? []
+  const ownersById = React.useMemo(() => byId(owners), [owners])
   const [buildingId, setBuildingId] = React.useState(txn.buildingId)
   const [moldId, setMoldId] = React.useState(txn.moldId)
   const [workerId, setWorkerId] = React.useState(txn.workerId)
@@ -88,13 +87,16 @@ export function ReviewCard({
         {fields.includes('building') && (
           <Field label="Building">
             <Combobox
-              options={buildings.map((b) => ({ value: b.id, label: b.name, sublabel: b.code }))}
+              options={buildings.map((b) => ({
+                value: b.id,
+                label: buildingName(b, ownersById),
+                sublabel: b.location,
+              }))}
               value={buildingId}
               onChange={(v) => {
                 setBuildingId(v)
                 setMoldId(undefined)
               }}
-              onCreate={quickCreateBuilding}
               placeholder="Assign building"
               invalid={!buildingId}
             />

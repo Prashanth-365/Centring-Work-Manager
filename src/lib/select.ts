@@ -5,12 +5,28 @@ import {
   moldOutstanding,
   receiptsForBuilding,
 } from './compute/profit'
-import type { Mold, SyncedTransaction, Worker } from './types'
+import type { Building, Mold, Owner, SyncedTransaction, Worker } from './types'
 
 export function byId<T extends { id: string }>(arr: T[]): Map<string, T> {
   const m = new Map<string, T>()
   for (const x of arr) m.set(x.id, x)
   return m
+}
+
+/**
+ * The building's DISPLAY name, derived live (§3) as `"{owner.name} - {location}"`.
+ * There is no stored name — editing the owner's name or the location updates it
+ * everywhere. Missing parts render as an em-dash so the control still reads cleanly.
+ */
+export function buildingName(
+  building: Pick<Building, 'ownerId' | 'location'> | undefined,
+  ownersById: Map<string, Owner>,
+): string {
+  if (!building) return '—'
+  const owner = building.ownerId ? ownersById.get(building.ownerId) : undefined
+  const ownerName = owner?.name?.trim() || '—'
+  const location = building.location?.trim() || '—'
+  return `${ownerName} - ${location}`
 }
 
 export function groupBy<T>(arr: T[], key: (t: T) => string | undefined): Map<string, T[]> {

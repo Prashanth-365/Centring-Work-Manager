@@ -7,6 +7,7 @@ import {
   DownloadCloud,
   Lock,
   Plus,
+  Tags,
   UploadCloud,
   UtensilsCrossed,
   X,
@@ -28,8 +29,11 @@ import { db } from '@/lib/db'
 import { updateSettings, createOtherExpenseType } from '@/lib/repo'
 import { useOtherExpenseTypes } from '@/lib/hooks'
 import { derivePinHash } from '@/lib/crypto'
-import { downloadBackup, restoreFromText } from '@/lib/backup'
-import type { ShiftBlock } from '@/lib/types'
+import { enrollBiometric, isBiometricAvailable } from '@/lib/biometric'
+import { buildBackupEnvelope, downloadBackup, restoreFromText } from '@/lib/backup'
+import { driveConfigured, pickFileText, uploadBackupToDrive } from '@/lib/drive'
+import { CategoryMapping } from '@/screens/settings/CategoryMapping'
+import type { AppLockConfig, ShiftBlock } from '@/lib/types'
 
 export function Settings() {
   const settingsRow = useLiveQuery(() => db.settings.get('app'), [])
@@ -103,10 +107,10 @@ export function Settings() {
         {/* Default food */}
         <Section icon={UtensilsCrossed} title="Default food amounts" hint="Applied to new workers">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Breakfast (block 1)">
+            <Field label="Breakfast (blocks 1 & 2)">
               {(id) => <Input id={id} type="number" value={breakfast} onChange={(e) => setBreakfast(e.target.value)} />}
             </Field>
-            <Field label="Lunch (block 3)">
+            <Field label="Lunch (blocks 2 & 3)">
               {(id) => <Input id={id} type="number" value={lunch} onChange={(e) => setLunch(e.target.value)} />}
             </Field>
             <Field label="Fixed / day">
@@ -192,7 +196,12 @@ export function Settings() {
           </div>
         </Section>
 
-        <AppLockSection enabled={settingsRow.appLock.enabled} />
+        {/* Category mapping (txn sub-category name → our type) */}
+        <Section icon={Tags} title="Category mapping" hint="How synced sub-categories map to our types">
+          <CategoryMapping />
+        </Section>
+
+        <AppLockSection lock={settingsRow.appLock} />
         <BackupSection />
 
         <p className="pt-2 text-center text-xs text-muted-foreground">
@@ -228,10 +237,16 @@ function Section({
   )
 }
 
-function AppLockSection({ enabled }: { enabled: boolean }) {
+function AppLockSection({ lock }: { lock: AppLockConfig }) {
   const [pinDialog, setPinDialog] = React.useState(false)
   const [pin, setPin] = React.useState('')
   const [err, setErr] = React.useState('')
+  const [bioAvailable, setBioAvailable] = React.useState(false)
+  const [bioBusy, setBioBusy] = React.useState(false)
+
+  React.useEffect(() => {
+    void isBiometricAvailable().then(setBioAvailable)
+  }, [])
 
   async function enable() {
     if (pin.length < 4) {
@@ -239,7 +254,7 @@ function AppLockSection({ enabled }: { enabled: boolean }) {
       return
     }
     const { hash, salt } = await derivePinHash(pin)
-    await updateSettings({ appLock: { enabled: true, pinHash: hash, salt } })
+    await updateSettings({ appLock: { enabled: true, method: 'pin', pinHash: hash, salt } })
     sessionStorage.setItem('cwm-unlocked', '1')
     setPin('')
     setPinDialog(false)
@@ -249,18 +264,56 @@ function AppLockSection({ enabled }: { enabled: boolean }) {
     await updateSettings({ appLock: { enabled: false } })
   }
 
+  // Biometrics are layered ON TOP of the PIN, which stays as the fallback.
+  async function toggleBiometric(on: boolean) {
+    setErr('')
+    if (on) {
+      setBioBusy(true)
+      const credId = await enrollBiometric()
+      setBioBusy(false)
+      if (!credId) {
+        setErr('Could not enroll biometrics on this device.')
+        return
+      }
+      await updateSettings({
+        appLock: {
+          ...lock,
+          method: 'biometric',
+          webauthnCredId: credId === 'native' ? undefined : credId,
+        },
+      })
+    } else {
+      await updateSettings({ appLock: { ...lock, method: 'pin' } })
+    }
+  }
+
   return (
-    <Section icon={Lock} title="App lock" hint="Require a PIN to open the app">
+    <Section icon={Lock} title="App lock" hint="Require a PIN — and optionally biometrics — to open the app">
       <label className="flex cursor-pointer items-center justify-between">
         <span className="text-sm font-medium">PIN lock</span>
         <Switch
-          checked={enabled}
+          checked={lock.enabled}
           onCheckedChange={(c) => {
             if (c) setPinDialog(true)
             else void disable()
           }}
         />
       </label>
+
+      {lock.enabled && bioAvailable && (
+        <label className="flex cursor-pointer items-center justify-between">
+          <span className="text-sm font-medium">
+            Biometric unlock
+            {bioBusy && <span className="ml-2 text-xs text-muted-foreground">enrolling…</span>}
+          </span>
+          <Switch
+            checked={lock.method === 'biometric'}
+            disabled={bioBusy}
+            onCheckedChange={(c) => void toggleBiometric(c)}
+          />
+        </label>
+      )}
+      {err && <p className="text-xs font-medium text-destructive">{err}</p>}
 
       <Dialog open={pinDialog} onOpenChange={setPinDialog}>
         <DialogContent>
@@ -294,14 +347,19 @@ function AppLockSection({ enabled }: { enabled: boolean }) {
   )
 }
 
+type BackupMode = 'backup' | 'restore' | 'drive-backup' | 'drive-restore' | null
+
 function BackupSection() {
-  const [mode, setMode] = React.useState<'backup' | 'restore' | null>(null)
+  const [mode, setMode] = React.useState<BackupMode>(null)
   const [pass, setPass] = React.useState('')
   const [file, setFile] = React.useState<File>()
   const [busy, setBusy] = React.useState(false)
   const [msg, setMsg] = React.useState('')
   const [err, setErr] = React.useState('')
   const fileRef = React.useRef<HTMLInputElement>(null)
+
+  const isBackup = mode === 'backup' || mode === 'drive-backup'
+  const isRestore = mode === 'restore' || mode === 'drive-restore'
 
   function reset() {
     setPass('')
@@ -315,15 +373,29 @@ function BackupSection() {
     setErr('')
     setMsg('')
     try {
+      if (isBackup && pass.length < 4) throw new Error('Use a passphrase of at least 4 characters.')
       if (mode === 'backup') {
-        if (pass.length < 4) throw new Error('Use a passphrase of at least 4 characters.')
         await downloadBackup(pass)
         setMsg('Backup downloaded.')
         setTimeout(() => setMode(null), 1200)
         reset()
+      } else if (mode === 'drive-backup') {
+        const env = await buildBackupEnvelope(pass)
+        await uploadBackupToDrive(`centering-backup-${env.createdAt.slice(0, 10)}.json`, JSON.stringify(env))
+        setMsg('Backed up to Google Drive.')
+        setTimeout(() => setMode(null), 1200)
+        reset()
       } else if (mode === 'restore') {
         if (!file) throw new Error('Choose a backup file.')
-        const text = await file.text()
+        await restoreFromText(await file.text(), pass)
+        setMsg('Restored. Reloading…')
+        setTimeout(() => window.location.reload(), 900)
+      } else if (mode === 'drive-restore') {
+        const text = await pickFileText()
+        if (!text) {
+          setBusy(false)
+          return
+        }
         await restoreFromText(text, pass)
         setMsg('Restored. Reloading…')
         setTimeout(() => window.location.reload(), 900)
@@ -348,12 +420,25 @@ function BackupSection() {
         </Button>
       </div>
 
+      {driveConfigured() && (
+        <div className="grid grid-cols-2 gap-2.5">
+          <Button variant="outline" onClick={() => { reset(); setMode('drive-backup') }}>
+            <DownloadCloud className="size-4" />
+            To Drive
+          </Button>
+          <Button variant="outline" onClick={() => { reset(); setMode('drive-restore') }}>
+            <UploadCloud className="size-4" />
+            From Drive
+          </Button>
+        </div>
+      )}
+
       <Dialog open={mode !== null} onOpenChange={(o) => !o && setMode(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{mode === 'backup' ? 'Download encrypted backup' : 'Restore from backup'}</DialogTitle>
+            <DialogTitle>{isBackup ? 'Encrypted backup' : 'Restore from backup'}</DialogTitle>
             <DialogDescription>
-              {mode === 'backup'
+              {isBackup
                 ? 'Choose a passphrase to encrypt your data. Keep it safe — it cannot be recovered.'
                 : 'Restoring replaces all current data in this app.'}
             </DialogDescription>
@@ -374,6 +459,11 @@ function BackupSection() {
               </Button>
             </>
           )}
+          {mode === 'drive-restore' && (
+            <p className="text-xs text-muted-foreground">
+              You’ll pick the backup file from Google Drive after tapping Restore.
+            </p>
+          )}
 
           <Input
             type="password"
@@ -389,8 +479,8 @@ function BackupSection() {
             <Button variant="outline" onClick={() => setMode(null)}>
               Cancel
             </Button>
-            <Button onClick={run} disabled={busy} variant={mode === 'restore' ? 'destructive' : 'default'}>
-              {busy ? 'Working…' : mode === 'backup' ? 'Download' : 'Restore'}
+            <Button onClick={run} disabled={busy} variant={isRestore ? 'destructive' : 'default'}>
+              {busy ? 'Working…' : mode === 'backup' ? 'Download' : mode === 'drive-backup' ? 'Upload' : 'Restore'}
             </Button>
           </DialogFooter>
         </DialogContent>

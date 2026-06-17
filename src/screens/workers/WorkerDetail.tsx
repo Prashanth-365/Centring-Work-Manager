@@ -13,13 +13,15 @@ import {
   useAllMolds,
   useAttendanceForWorker,
   useBuildings,
+  useOwners,
   useSettings,
   useTransactionsForWorker,
   useWorker,
 } from '@/lib/hooks'
 import { workerBalance } from '@/lib/compute/balance'
+import { currentWage, wageOnDate } from '@/lib/compute/wage'
 import { BALANCE_SUBCATS } from '@/lib/constants'
-import { byId } from '@/lib/select'
+import { byId, buildingName } from '@/lib/select'
 import { formatDate } from '@/lib/dates'
 import { days, money } from '@/lib/format'
 import type { WeekStart } from '@/lib/dates'
@@ -36,9 +38,11 @@ export function WorkerDetail() {
   const attendance = useAttendanceForWorker(id)
   const txns = useTransactionsForWorker(id)
   const buildings = useBuildings()
+  const owners = useOwners()
   const molds = useAllMolds()
   const settings = useSettings()
   const buildingsById = React.useMemo(() => byId(buildings), [buildings])
+  const ownersById = React.useMemo(() => byId(owners), [owners])
   const moldsById = React.useMemo(() => byId(molds), [molds])
 
   if (!worker) return <PageHeader title="Worker" back />
@@ -50,7 +54,7 @@ export function WorkerDetail() {
     <>
       <PageHeader
         title={worker.name}
-        subtitle={`${worker.type} · ${worker.code}`}
+        subtitle={worker.type}
         back
         actions={
           <Button asChild variant="ghost" size="icon">
@@ -69,7 +73,7 @@ export function WorkerDetail() {
               {!worker.active && <Badge variant="outline">Inactive</Badge>}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {money(worker.dailyWage)}/day · Food: {FOOD_LABEL[worker.foodMode]}
+              {money(currentWage(worker))}/day · Food: {FOOD_LABEL[worker.foodMode]}
             </p>
           </div>
           {worker.phone && (
@@ -119,7 +123,7 @@ export function WorkerDetail() {
                     >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">
-                          {b?.name ?? 'Building'}
+                          {buildingName(b, ownersById)}
                           {m ? ` · ${m.floorName}` : ''}
                         </p>
                         <p className="text-xs text-muted-foreground">{formatDate(a.date)}</p>
@@ -127,7 +131,7 @@ export function WorkerDetail() {
                       <div className="text-right">
                         <p className="tabular text-sm font-semibold">{days(a.dayFraction)} day</p>
                         <p className="tabular text-xs text-muted-foreground">
-                          {money(a.dayFraction * worker.dailyWage)}
+                          {money(a.dayFraction * wageOnDate(worker, a.date))}
                         </p>
                       </div>
                     </Link>

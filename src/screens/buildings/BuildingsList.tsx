@@ -18,7 +18,7 @@ import {
   useTransactions,
   useWorkers,
 } from '@/lib/hooks'
-import { byId, computeBuilding, groupBy } from '@/lib/select'
+import { byId, buildingName, computeBuilding, groupBy } from '@/lib/select'
 import { money } from '@/lib/format'
 
 export function BuildingsList() {
@@ -38,8 +38,7 @@ export function BuildingsList() {
   const filtered = buildings.filter((b) => {
     if (!showClosed && b.status === 'Closed') return false
     if (!q) return true
-    const owner = b.ownerId ? ownersById.get(b.ownerId)?.name : ''
-    return [b.name, b.code, b.location, owner]
+    return [buildingName(b, ownersById), b.location]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
@@ -100,7 +99,7 @@ export function BuildingsList() {
             {filtered.map((b) => {
               const bm = moldsByBuilding.get(b.id) ?? []
               const c = computeBuilding(b.id, bm, attendance, workersById, txns)
-              const owner = b.ownerId ? ownersById.get(b.ownerId) : undefined
+              const name = buildingName(b, ownersById)
               return (
                 <Link
                   key={b.id}
@@ -108,17 +107,15 @@ export function BuildingsList() {
                   className="block rounded-xl border border-border bg-card p-3.5 shadow-card transition active:scale-[0.99]"
                 >
                   <div className="flex items-start gap-3">
-                    <Thumb blob={b.photoThumb} name={b.name} square />
+                    <Thumb blob={b.photoThumb} name={name} square />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate font-semibold">{b.name}</p>
+                        <p className="truncate font-semibold">{name}</p>
                         <StatusPill status={b.status} kind="building" />
                       </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {b.code}
-                        {owner ? ` · ${owner.name}` : ''}
-                        {b.location ? ` · ${b.location}` : ''}
-                      </p>
+                      {b.ratePerSqft != null && (
+                        <p className="truncate text-xs text-muted-foreground">{money(b.ratePerSqft)}/sqft</p>
+                      )}
                       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                         {c.current && (
                           <span className="text-muted-foreground">

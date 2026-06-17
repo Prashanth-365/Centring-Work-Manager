@@ -8,16 +8,12 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { useAttendance, useBuildings, useMolds, useSettings, useWorkers } from '@/lib/hooks'
-import {
-  createAttendance,
-  deleteAttendance,
-  quickCreateBuilding,
-  quickCreateWorker,
-  updateAttendance,
-} from '@/lib/repo'
+import { useAttendance, useBuildings, useMolds, useOwners, useSettings, useWorkers } from '@/lib/hooks'
+import { createAttendance, deleteAttendance, quickCreateWorker, updateAttendance } from '@/lib/repo'
 import { blocksFromTimeRange, dayFractionFromBlocks, mealFlags, normalizeBlocks } from '@/lib/compute/shifts'
-import { mealFoodForEntry } from '@/lib/compute/food'
+import { mealFoodForBlocks } from '@/lib/compute/food'
+import { currentWage, wageOnDate } from '@/lib/compute/wage'
+import { byId, buildingName } from '@/lib/select'
 import { todayISO } from '@/lib/dates'
 import { days, money } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -36,6 +32,7 @@ export function AttendanceForm() {
 
   const workers = useWorkers()
   const buildings = useBuildings()
+  const owners = useOwners()
   const settings = useSettings()
   const allAttendance = useAttendance()
   const existing = editing ? allAttendance.find((a) => a.id === id) : undefined
@@ -55,6 +52,7 @@ export function AttendanceForm() {
 
   const molds = useMolds(buildingId)
   const worker = workers.find((w) => w.id === workerId)
+  const ownersById = React.useMemo(() => byId(owners), [owners])
 
   React.useEffect(() => {
     if (existing && !loaded.current) {
@@ -70,7 +68,19 @@ export function AttendanceForm() {
     }
   }, [existing])
 
+  // Blocks this worker already has on this date on OTHER lines — they can't be
+  // worked twice in a day (§3), and they DO count toward the day's food union.
+  const takenByOthers = React.useMemo(() => {
+    const s = new Set<number>()
+    for (const a of allAttendance) {
+      if (a.workerId !== workerId || a.date !== date || (editing && a.id === id)) continue
+      for (const b of a.blocks) s.add(b)
+    }
+    return s
+  }, [allAttendance, workerId, date, editing, id])
+
   function toggleBlock(b: number) {
+    if (takenByOthers.has(b)) return // already on another line that day
     setBlocks((prev) => (prev.includes(b) ? prev.filter((x) => x !== b) : normalizeBlocks([...prev, b])))
   }
 
@@ -78,19 +88,24 @@ export function AttendanceForm() {
     setFrom(nextFrom)
     setTo(nextTo)
     if (nextFrom && nextTo) {
-      const mapped = blocksFromTimeRange(nextFrom, nextTo, settings.shiftBlocks)
+      const mapped = blocksFromTimeRange(nextFrom, nextTo, settings.shiftBlocks).filter(
+        (b) => !takenByOthers.has(b),
+      )
       if (mapped.length) setBlocks(mapped)
     }
   }
 
   const dayFraction = dayFractionFromBlocks(blocks)
-  const meals = mealFlags(blocks)
-  const wage = worker ? dayFraction * worker.dailyWage : 0
-  const foodPreview =
+  const wage = worker ? dayFraction * wageOnDate(worker, date) : 0
+  // Food is day-wise: compute on the UNION of this line's blocks + the worker's
+  // other lines that day, so the preview matches what overhead/weekly will show.
+  const unionBlocks = normalizeBlocks([...takenByOthers, ...blocks])
+  const meals = mealFlags(unionBlocks)
+  const dayFood =
     worker?.foodMode === 'meal'
-      ? mealFoodForEntry(worker, blocks)
+      ? mealFoodForBlocks(worker, unionBlocks)
       : worker?.foodMode === 'fixedPerDay'
-        ? (worker.foodPerDay ?? 0) * dayFraction
+        ? (worker.foodPerDay ?? 0) * dayFractionFromBlocks(unionBlocks)
         : undefined
 
   async function submit(e: React.FormEvent) {
@@ -111,8 +126,14 @@ export function AttendanceForm() {
       shiftTo: to || undefined,
       notes: notes.trim() || undefined,
     }
-    if (editing) await updateAttendance(id!, data)
-    else await createAttendance(data)
+    try {
+      if (editing) await updateAttendance(id!, data)
+      else await createAttendance(data)
+    } catch (err) {
+      setSaving(false)
+      setError(err instanceof Error ? err.message : 'Could not save')
+      return
+    }
     navigate(-1)
   }
 
@@ -132,7 +153,9 @@ export function AttendanceForm() {
     >
       <Field label="Worker" required>
         <Combobox
-          options={workers.filter((w) => w.active || w.id === workerId).map((w) => ({ value: w.id, label: w.name, sublabel: `${w.type} · ${money(w.dailyWage)}/day` }))}
+          options={workers
+            .filter((w) => w.active || w.id === workerId)
+            .map((w) => ({ value: w.id, label: w.name, sublabel: `${w.type} · ${money(currentWage(w))}/day` }))}
           value={workerId}
           onChange={setWorkerId}
           onCreate={quickCreateWorker}
@@ -140,15 +163,16 @@ export function AttendanceForm() {
         />
       </Field>
 
-      <Field label="Building" required>
+      <Field label="Building" required hint="Add new buildings from the Buildings tab">
         <Combobox
-          options={buildings.filter((b) => b.status !== 'Closed' || b.id === buildingId).map((b) => ({ value: b.id, label: b.name, sublabel: b.code }))}
+          options={buildings
+            .filter((b) => b.status !== 'Closed' || b.id === buildingId)
+            .map((b) => ({ value: b.id, label: buildingName(b, ownersById), sublabel: b.location }))}
           value={buildingId}
           onChange={(v) => {
             setBuildingId(v)
             setMoldId(undefined)
           }}
-          onCreate={quickCreateBuilding}
           placeholder="Pick building"
         />
       </Field>
@@ -177,7 +201,7 @@ export function AttendanceForm() {
               <button
                 key={p.label}
                 type="button"
-                onClick={() => setBlocks(p.blocks)}
+                onClick={() => setBlocks(p.blocks.filter((b) => !takenByOthers.has(b)))}
                 className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition hover:bg-accent"
               >
                 {p.label}
@@ -188,22 +212,26 @@ export function AttendanceForm() {
         <div className="grid grid-cols-3 gap-2">
           {settings.shiftBlocks.map((b) => {
             const on = blocks.includes(b.index)
+            const taken = takenByOthers.has(b.index)
             return (
               <button
                 key={b.index}
                 type="button"
+                disabled={taken}
                 onClick={() => toggleBlock(b.index)}
                 className={cn(
                   'flex flex-col items-center gap-1 rounded-xl border p-2.5 text-center transition',
-                  on ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground',
+                  on
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border bg-card text-muted-foreground',
+                  taken && 'cursor-not-allowed opacity-40',
                 )}
               >
                 <span className="text-xs font-semibold">Block {b.index}</span>
-                <span className="text-[11px]">{b.from}–{b.to}</span>
-                <span className="flex h-4 items-center gap-1 text-[10px]">
-                  {b.index === 1 && <Coffee className="size-3" />}
-                  {b.index === 3 && <UtensilsCrossed className="size-3" />}
+                <span className="text-[11px]">
+                  {b.from}–{b.to}
                 </span>
+                <span className="h-4 text-[10px]">{taken ? 'on another line' : ''}</span>
               </button>
             )
           })}
@@ -222,8 +250,8 @@ export function AttendanceForm() {
           <p className="tabular text-lg font-bold">{money(wage)}</p>
         </div>
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Food</p>
-          <p className="tabular text-lg font-bold">{foodPreview != null ? money(foodPreview) : '—'}</p>
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Food / day</p>
+          <p className="tabular text-lg font-bold">{dayFood != null ? money(dayFood) : '—'}</p>
         </div>
         <div className="col-span-3 flex items-center justify-center gap-3 border-t border-border pt-2 text-xs text-muted-foreground">
           <span className={cn('flex items-center gap-1', meals.breakfast && 'text-foreground')}>

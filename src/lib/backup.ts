@@ -17,6 +17,7 @@ const TABLES = [
   'attendance',
   'syncedTransactions',
   'otherExpenseTypes',
+  'categoryMap',
   'settings',
 ] as const
 
@@ -63,7 +64,7 @@ export async function buildBackupEnvelope(passphrase: string): Promise<BackupEnv
     const rows = (await db.table(name).toArray()) as Record<string, unknown>[]
     tables[name] = await Promise.all(rows.map(serializeRecord))
   }
-  const payload: BackupPayload = { app: 'centering-work-manager', schema: 1, exportedAt, tables }
+  const payload: BackupPayload = { app: 'centering-work-manager', schema: 2, exportedAt, tables }
   return encryptToEnvelope(JSON.stringify(payload), passphrase, exportedAt)
 }
 

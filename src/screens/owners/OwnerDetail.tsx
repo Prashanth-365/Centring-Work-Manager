@@ -8,7 +8,7 @@ import { StatusPill } from '@/components/StatusPill'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
 import { useAllMolds, useBuildings, useOwner, useTransactions } from '@/lib/hooks'
-import { groupBy } from '@/lib/select'
+import { byId, buildingName, groupBy } from '@/lib/select'
 import { buildingReceivable, receiptsForBuilding } from '@/lib/compute/profit'
 import { money } from '@/lib/format'
 
@@ -22,6 +22,7 @@ export function OwnerDetail() {
 
   if (!owner) return <PageHeader title="Owner" back />
 
+  const ownersById = byId([owner])
   const obuildings = buildings.filter((b) => b.ownerId === owner.id)
   const totalOutstanding = obuildings.reduce(
     (s, b) => s + buildingReceivable(moldsByBuilding.get(b.id) ?? [], txns),
@@ -33,7 +34,7 @@ export function OwnerDetail() {
     <>
       <PageHeader
         title={owner.name}
-        subtitle={owner.code}
+        subtitle={owner.location}
         back
         actions={
           <Button asChild variant="ghost" size="icon">
@@ -88,7 +89,7 @@ export function OwnerDetail() {
                     className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{b.name}</p>
+                      <p className="truncate font-medium">{buildingName(b, ownersById)}</p>
                       <div className="mt-1">
                         <StatusPill status={b.status} kind="building" />
                       </div>

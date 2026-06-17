@@ -6,8 +6,8 @@ import { EmptyState } from '@/components/EmptyState'
 import { Thumb } from '@/components/Thumb'
 import { Fab } from '@/components/Fab'
 import { Input } from '@/components/ui/input'
-import { useAllMolds, useAttendance, useBuildings, useWorkers } from '@/lib/hooks'
-import { byId, groupBy } from '@/lib/select'
+import { useAllMolds, useAttendance, useBuildings, useOwners, useWorkers } from '@/lib/hooks'
+import { byId, buildingName, groupBy } from '@/lib/select'
 import { formatDate } from '@/lib/dates'
 import { days } from '@/lib/format'
 
@@ -15,17 +15,19 @@ export function AttendanceList() {
   const attendance = useAttendance()
   const workers = useWorkers()
   const buildings = useBuildings()
+  const owners = useOwners()
   const molds = useAllMolds()
   const [q, setQ] = React.useState('')
 
   const workersById = React.useMemo(() => byId(workers), [workers])
   const buildingsById = React.useMemo(() => byId(buildings), [buildings])
+  const ownersById = React.useMemo(() => byId(owners), [owners])
   const moldsById = React.useMemo(() => byId(molds), [molds])
 
   const filtered = attendance.filter((a) => {
     if (!q) return true
     const w = workersById.get(a.workerId)?.name ?? ''
-    const b = buildingsById.get(a.buildingId)?.name ?? ''
+    const b = buildingName(buildingsById.get(a.buildingId), ownersById)
     return `${w} ${b}`.toLowerCase().includes(q.toLowerCase())
   })
 
@@ -74,7 +76,7 @@ export function AttendanceList() {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-medium">{w?.name ?? 'Worker'}</p>
                             <p className="truncate text-xs text-muted-foreground">
-                              {b?.name ?? 'Building'}
+                              {buildingName(b, ownersById)}
                               {m ? ` · ${m.floorName}` : ''}
                             </p>
                           </div>

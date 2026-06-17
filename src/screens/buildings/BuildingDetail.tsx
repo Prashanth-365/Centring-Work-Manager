@@ -26,7 +26,7 @@ import {
   useTransactionsForBuilding,
   useWorkers,
 } from '@/lib/hooks'
-import { byId, computeBuilding, moldOutstanding } from '@/lib/select'
+import { byId, buildingName, computeBuilding, moldOutstanding } from '@/lib/select'
 import { receiptsForMold } from '@/lib/compute/profit'
 import { formatDate } from '@/lib/dates'
 import { money } from '@/lib/format'
@@ -47,12 +47,12 @@ export function BuildingDetail() {
   }
 
   const c = computeBuilding(building.id, molds, attendance, workersById, txns)
+  const name = buildingName(building, byId(owner ? [owner] : []))
 
   return (
     <>
       <PageHeader
-        title={building.name}
-        subtitle={building.code}
+        title={name}
         back
         actions={
           <Button asChild variant="ghost" size="icon">
@@ -67,7 +67,7 @@ export function BuildingDetail() {
         {/* Hero */}
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
           <div className="flex items-start gap-3">
-            <Thumb blob={building.photoThumb} name={building.name} square className="size-16 text-xl" />
+            <Thumb blob={building.photoThumb} name={name} square className="size-16 text-xl" />
             <div className="min-w-0 flex-1 space-y-2">
               <StatusPill status={building.status} kind="building" />
               {owner && (

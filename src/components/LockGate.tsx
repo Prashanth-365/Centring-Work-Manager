@@ -1,26 +1,38 @@
 import * as React from 'react'
-import { Delete, Lock } from 'lucide-react'
+import { Delete, Fingerprint, Lock } from 'lucide-react'
 import { ensureSeed } from '@/lib/db'
+import { startDailyAutoAdvance } from '@/lib/autoAdvance'
 import { useSettings } from '@/lib/hooks'
 import { verifyPin } from '@/lib/crypto'
+import { verifyBiometric } from '@/lib/biometric'
+import { onAppStateChange } from '@/lib/native'
+import type { AppLockConfig } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const KEY = 'cwm-unlocked'
+const HIDDEN_AT = 'cwm-hidden-at'
 
-function PinScreen({
-  pinHash,
-  salt,
-  onUnlock,
-}: {
-  pinHash: string
-  salt: string
-  onUnlock: () => void
-}) {
+function LockScreen({ lock, onUnlock }: { lock: AppLockConfig; onUnlock: () => void }) {
   const [pin, setPin] = React.useState('')
   const [error, setError] = React.useState(false)
+  const [bioTried, setBioTried] = React.useState(false)
+  const canBiometric = lock.method === 'biometric' && (!!lock.webauthnCredId || true)
+
+  const tryBiometric = React.useCallback(async () => {
+    setBioTried(true)
+    const ok = await verifyBiometric(lock.webauthnCredId)
+    if (ok) onUnlock()
+  }, [lock.webauthnCredId, onUnlock])
+
+  // Auto-prompt biometrics once when that's the chosen method.
+  React.useEffect(() => {
+    if (canBiometric && !bioTried) void tryBiometric()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function submit(next: string) {
-    const ok = await verifyPin(next, pinHash, salt)
+    if (!lock.pinHash || !lock.salt) return
+    const ok = await verifyPin(next, lock.pinHash, lock.salt)
     if (ok) onUnlock()
     else {
       setError(true)
@@ -78,10 +90,20 @@ function PinScreen({
         <button
           onClick={() => setPin((p) => p.slice(0, -1))}
           className="flex h-16 items-center justify-center rounded-2xl text-muted-foreground transition active:scale-95"
+          aria-label="Delete"
         >
           <Delete className="size-6" />
         </button>
       </div>
+      {canBiometric && (
+        <button
+          onClick={() => void tryBiometric()}
+          className="flex items-center gap-2 text-sm font-medium text-primary transition active:scale-95"
+        >
+          <Fingerprint className="size-5" />
+          Use biometrics
+        </button>
+      )}
     </div>
   )
 }
@@ -91,18 +113,51 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   const [unlocked, setUnlocked] = React.useState(() => sessionStorage.getItem(KEY) === '1')
 
   React.useEffect(() => {
-    void ensureSeed()
+    let stop = () => {}
+    void ensureSeed().then(() => {
+      stop = startDailyAutoAdvance() // run now + at each midnight / foreground (§4)
+    })
+    return () => stop()
   }, [])
 
   const lock = settings?.appLock
-  if (!lock?.enabled || unlocked || !lock.pinHash || !lock.salt) return <>{children}</>
+  const enabled = !!lock?.enabled
+  const relockMs = (lock?.relockMinutes ?? 2) * 60_000
+
+  // Re-lock after the app has been backgrounded longer than relockMinutes (§14).
+  React.useEffect(() => {
+    if (!enabled) return
+    const relockIfStale = () => {
+      const at = Number(sessionStorage.getItem(HIDDEN_AT) || 0)
+      if (at && Date.now() - at > relockMs) {
+        sessionStorage.removeItem(KEY)
+        setUnlocked(false)
+      }
+      sessionStorage.removeItem(HIDDEN_AT)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') sessionStorage.setItem(HIDDEN_AT, String(Date.now()))
+      else relockIfStale()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    const offNative = onAppStateChange((active) => {
+      if (!active) sessionStorage.setItem(HIDDEN_AT, String(Date.now()))
+      else relockIfStale()
+    })
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      offNative()
+    }
+  }, [enabled, relockMs])
+
+  if (!enabled || unlocked || !lock?.pinHash || !lock?.salt) return <>{children}</>
 
   return (
-    <PinScreen
-      pinHash={lock.pinHash}
-      salt={lock.salt}
+    <LockScreen
+      lock={lock}
       onUnlock={() => {
         sessionStorage.setItem(KEY, '1')
+        sessionStorage.removeItem(HIDDEN_AT)
         setUnlocked(true)
       }}
     />

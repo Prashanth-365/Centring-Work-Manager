@@ -10,20 +10,21 @@ import {
   useAttendanceForBuilding,
   useBuilding,
   useMold,
+  useOwner,
   useTransactionsForBuilding,
   useWorkers,
 } from '@/lib/hooks'
 import { updateMold } from '@/lib/repo'
 import { receiptsForMold } from '@/lib/compute/profit'
-import { moldOutstanding } from '@/lib/select'
-import { byId } from '@/lib/select'
-import { formatDate } from '@/lib/dates'
+import { byId, buildingName, moldOutstanding } from '@/lib/select'
+import { formatDate, todayISO } from '@/lib/dates'
 import { days, money } from '@/lib/format'
 
 export function MoldDetail() {
   const { id } = useParams()
   const mold = useMold(id)
   const building = useBuilding(mold?.buildingId)
+  const owner = useOwner(building?.ownerId)
   const txns = useTransactionsForBuilding(mold?.buildingId)
   const attendanceAll = useAttendanceForBuilding(mold?.buildingId)
   const workers = useWorkers()
@@ -41,7 +42,7 @@ export function MoldDetail() {
     <>
       <PageHeader
         title={mold.floorName}
-        subtitle={building?.name}
+        subtitle={buildingName(building, byId(owner ? [owner] : []))}
         back
         actions={
           <Button asChild variant="ghost" size="icon">
@@ -69,21 +70,19 @@ export function MoldDetail() {
           <Stat label="Outstanding" value={money(outstanding)} tone={outstanding > 0 ? 'danger' : 'default'} />
         </div>
 
-        {/* Quick status actions */}
+        {/* Quick status actions. Work status sets its date so it survives the
+            midnight auto-advance; payment status is auto-derived from the bill
+            and assigned owner receipts, so it has no manual button. */}
         <div className="flex flex-wrap gap-2">
           {mold.workStatus !== 'Done/Removed' && (
-            <Button variant="secondary" size="sm" onClick={() => updateMold(mold.id, { workStatus: 'Done/Removed' })}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                updateMold(mold.id, { workStatus: 'Done/Removed', endDate: mold.endDate || todayISO() })
+              }
+            >
               Mark removed
-            </Button>
-          )}
-          {mold.paymentStatus !== 'Billed' && mold.paymentStatus !== 'Paid' && (
-            <Button variant="secondary" size="sm" onClick={() => updateMold(mold.id, { paymentStatus: 'Billed' })}>
-              Mark billed
-            </Button>
-          )}
-          {mold.paymentStatus !== 'Paid' && (
-            <Button variant="secondary" size="sm" onClick={() => updateMold(mold.id, { paymentStatus: 'Paid' })}>
-              Mark paid
             </Button>
           )}
         </div>

@@ -27,7 +27,7 @@ export const MOLD_PAYMENT_STATUSES: MoldPaymentStatus[] = [
 export const WORKER_TYPES: WorkerType[] = ['Helper', 'Carpenter', 'Outsider']
 
 export const FOOD_MODES: { value: FoodMode; label: string; hint: string }[] = [
-  { value: 'meal', label: 'Per meal', hint: 'Breakfast if block 1, lunch if block 3' },
+  { value: 'meal', label: 'Per meal', hint: 'Breakfast if blocks 1 & 2, lunch if blocks 2 & 3' },
   { value: 'fixedPerDay', label: 'Fixed / day', hint: 'Amount × day-fraction' },
   { value: 'fixedPerWeek', label: 'Fixed / week', hint: 'Weekly amount pro-rated by days worked' },
 ]
@@ -89,6 +89,52 @@ export const DEFAULTS = {
 } as const
 
 export const SEED_OTHER_EXPENSE_TYPES = ['FinanceCost', 'Theft']
+
+// --- Transaction sync: category-name → our SubCategory auto-matching (§8) ----
+
+/** The top-level transaction-app category we read from. */
+export const CONSTRUCTION_CATEGORY_NAME = 'Construction'
+
+/** Normalize a category/sub-category name for matching: lowercase, strip all
+ * non-alphanumerics, and drop a trailing plural 's' (so "Owner Receipts",
+ * "owner_receipt" and "OwnerReceipt" all collapse to the same key). */
+export function normalizeCategoryName(name: string): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return base.endsWith('s') && base.length > 1 ? base.slice(0, -1) : base
+}
+
+/** Default name → type matches, keyed by normalizeCategoryName(). FinanceCost
+ * and Theft collapse to OtherExpense (they're otherExpenseTypes in our model). */
+export const DEFAULT_CATEGORY_MATCHES: Record<string, SubCategory> = {
+  ownerreceipt: 'OwnerReceipt',
+  receipt: 'OwnerReceipt',
+  ownerpayment: 'OwnerReceipt',
+  wage: 'Wage',
+  salary: 'Wage',
+  advance: 'Advance',
+  food: 'Food',
+  meal: 'Food',
+  transport: 'Transport',
+  travel: 'Transport',
+  rent: 'Rent',
+  material: 'Material',
+  financecost: 'OtherExpense',
+  theft: 'OtherExpense',
+  otherexpense: 'OtherExpense',
+  other: 'OtherExpense',
+}
+
+/** Source names that, while typed as OtherExpense, also name a known
+ * otherExpenseType — used to pre-fill the assignment in Review. */
+export const OTHER_EXPENSE_NAME_HINTS: Record<string, string> = {
+  financecost: 'FinanceCost',
+  theft: 'Theft',
+}
+
+/** Auto-match a raw sub-category name to our type; OtherExpense when unknown. */
+export function autoMatchSubCategory(name: string): SubCategory {
+  return DEFAULT_CATEGORY_MATCHES[normalizeCategoryName(name)] ?? 'OtherExpense'
+}
 
 /** Each shift block is half a day; total day-fraction is capped here. */
 export const BLOCK_FRACTION = 0.5

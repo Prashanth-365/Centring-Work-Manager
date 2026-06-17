@@ -10,8 +10,10 @@ export function useSettings() {
   )
 }
 
+// Buildings have no stored name to sort on (it's derived) — order by recent
+// activity; screens that need name order sort in-memory via buildingName().
 export function useBuildings() {
-  return useLiveQuery(() => db.buildings.orderBy('name').toArray(), [], [])
+  return useLiveQuery(() => db.buildings.orderBy('updatedAt').reverse().toArray(), [], [])
 }
 
 export function useBuilding(id?: string) {
@@ -118,6 +120,10 @@ export function useTransactionsForBuilding(buildingId?: string) {
 
 export function useOtherExpenseTypes() {
   return useLiveQuery(() => db.otherExpenseTypes.orderBy('name').toArray(), [], [])
+}
+
+export function useCategoryMap() {
+  return useLiveQuery(() => db.categoryMap.orderBy('sourceName').toArray(), [], [])
 }
 
 export function useReviewCount() {

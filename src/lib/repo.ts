@@ -1,49 +1,32 @@
-import type { Table } from 'dexie'
 import { db } from './db'
 import { now, uuid } from './ids'
+import { todayISO } from './dates'
+import { withWage } from './compute/wage'
 import type {
   Attendance,
   Building,
+  CategoryMap,
   Mold,
   OtherExpenseType,
   Owner,
   Settings,
+  SubCategory,
   SyncedTransaction,
   Worker,
 } from './types'
-import { DEFAULTS } from './constants'
-
-function slugCode(name: string, fallback = 'X'): string {
-  const words = name.trim().toUpperCase().split(/\s+/).filter(Boolean)
-  let base: string
-  if (words.length >= 2) base = words.map((w) => w[0]).join('').slice(0, 4)
-  else base = (words[0] ?? '').replace(/[^A-Z0-9]/g, '').slice(0, 4)
-  return base || fallback
-}
-
-async function uniqueCode(table: Table<{ code: string }, string>, base: string): Promise<string> {
-  let code = base
-  let i = 1
-  // eslint-disable-next-line no-await-in-loop
-  while ((await table.where('code').equals(code).count()) > 0) {
-    i += 1
-    code = `${base}${i}`
-  }
-  return code
-}
+import { DEFAULTS, normalizeCategoryName } from './constants'
 
 // --- Buildings -------------------------------------------------------------
+// Buildings have no stored name or code — the name is derived live from the
+// owner + location (see buildingName() in select.ts).
 
-export async function createBuilding(data: Partial<Building> & { name: string }): Promise<string> {
+export async function createBuilding(data: Partial<Building> = {}): Promise<string> {
   const id = data.id ?? uuid()
   const ts = now()
-  const code = data.code?.trim() || (await uniqueCode(db.buildings, slugCode(data.name, 'BLDG')))
   await db.buildings.add({
     status: 'Yet to Start',
     ...data,
     id,
-    code,
-    name: data.name.trim(),
     createdAt: ts,
     updatedAt: ts,
   } as Building)
@@ -62,10 +45,6 @@ export async function deleteBuilding(id: string): Promise<void> {
   })
 }
 
-export async function quickCreateBuilding(name: string): Promise<string> {
-  return createBuilding({ name, status: 'In Progress' })
-}
-
 // --- Molds -----------------------------------------------------------------
 
 export async function nextMoldOrder(buildingId: string): Promise<number> {
@@ -73,7 +52,9 @@ export async function nextMoldOrder(buildingId: string): Promise<number> {
   return molds.reduce((m, x) => Math.max(m, x.order), 0) + 1
 }
 
-export async function createMold(data: Partial<Mold> & { buildingId: string; floorName: string }): Promise<string> {
+export async function createMold(
+  data: Partial<Mold> & { buildingId: string; floorName: string },
+): Promise<string> {
   const id = data.id ?? uuid()
   const ts = now()
   const order = data.order ?? (await nextMoldOrder(data.buildingId))
@@ -122,14 +103,21 @@ async function settingsOrDefault(): Promise<Settings> {
   )
 }
 
-export async function createWorker(data: Partial<Worker> & { name: string }): Promise<string> {
+/** Create a worker. Accepts an optional starting `dailyWage` (+ `effectiveFrom`,
+ * defaulting to today) which seeds `wageHistory`; or pass `wageHistory` directly. */
+export async function createWorker(
+  data: Partial<Worker> & { name: string; dailyWage?: number; effectiveFrom?: string },
+): Promise<string> {
   const id = data.id ?? uuid()
   const ts = now()
   const s = await settingsOrDefault()
-  const code = data.code?.trim() || (await uniqueCode(db.workers, slugCode(data.name, 'WKR')))
+  const { dailyWage, effectiveFrom, wageHistory, ...rest } = data
+  const history =
+    wageHistory && wageHistory.length
+      ? [...wageHistory].sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : 1))
+      : [{ effectiveFrom: effectiveFrom || todayISO(), dailyWage: dailyWage ?? 0 }]
   await db.workers.add({
     type: 'Helper',
-    dailyWage: 0,
     active: true,
     foodMode: 'meal',
     foodBreakfast: s.defaultFoodBreakfast,
@@ -137,9 +125,9 @@ export async function createWorker(data: Partial<Worker> & { name: string }): Pr
     foodPerDay: s.defaultFoodPerDay,
     foodPerWeek: s.defaultFoodPerWeek,
     maxDaysPerWeek: s.defaultMaxDaysPerWeek,
-    ...data,
+    ...rest,
+    wageHistory: history,
     id,
-    code,
     name: data.name.trim(),
     createdAt: ts,
     updatedAt: ts,
@@ -149,6 +137,20 @@ export async function createWorker(data: Partial<Worker> & { name: string }): Pr
 
 export async function updateWorker(id: string, patch: Partial<Worker>): Promise<void> {
   await db.workers.update(id, { ...patch, updatedAt: now() })
+}
+
+/** Append (or correct, if same date) a wage rate — never overwrites past rates (§7). */
+export async function setWorkerWage(
+  id: string,
+  dailyWage: number,
+  effectiveFrom: string = todayISO(),
+): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  await db.workers.update(id, {
+    wageHistory: withWage(worker, dailyWage, effectiveFrom),
+    updatedAt: now(),
+  })
 }
 
 export async function deleteWorker(id: string): Promise<void> {
@@ -164,11 +166,9 @@ export async function quickCreateWorker(name: string): Promise<string> {
 export async function createOwner(data: Partial<Owner> & { name: string }): Promise<string> {
   const id = data.id ?? uuid()
   const ts = now()
-  const code = data.code?.trim() || (await uniqueCode(db.owners, slugCode(data.name, 'OWN')))
   await db.owners.add({
     ...data,
     id,
-    code,
     name: data.name.trim(),
     createdAt: ts,
     updatedAt: ts,
@@ -190,11 +190,47 @@ export async function quickCreateOwner(name: string): Promise<string> {
 
 // --- Attendance ------------------------------------------------------------
 
+/**
+ * Blocks already worked by this worker on this date on OTHER lines. A worker
+ * cannot have the same block twice on a day (§3), so a new/edited line's blocks
+ * must not intersect these.
+ */
+export async function blocksTakenOnDay(
+  workerId: string,
+  date: string,
+  excludeId?: string,
+): Promise<Set<number>> {
+  const sameDay = await db.attendance.where('[workerId+date]').equals([workerId, date]).toArray()
+  const taken = new Set<number>()
+  for (const a of sameDay) {
+    if (a.id === excludeId) continue
+    for (const b of a.blocks) taken.add(b)
+  }
+  return taken
+}
+
+async function assertNoBlockClash(
+  workerId: string,
+  date: string,
+  blocks: number[],
+  excludeId?: string,
+): Promise<void> {
+  const taken = await blocksTakenOnDay(workerId, date, excludeId)
+  const clash = blocks.filter((b) => taken.has(b))
+  if (clash.length) {
+    throw new Error(
+      `Block ${clash.join(', ')} already recorded for this worker on ${date}. Each block can only be worked once a day.`,
+    )
+  }
+}
+
 export async function createAttendance(
   data: Partial<Attendance> & { workerId: string; buildingId: string; date: string },
 ): Promise<string> {
   const id = data.id ?? uuid()
   const ts = now()
+  const blocks = data.blocks ?? []
+  await assertNoBlockClash(data.workerId, data.date, blocks)
   await db.attendance.add({
     blocks: [],
     dayFraction: 0,
@@ -207,6 +243,17 @@ export async function createAttendance(
 }
 
 export async function updateAttendance(id: string, patch: Partial<Attendance>): Promise<void> {
+  if (patch.blocks) {
+    const existing = await db.attendance.get(id)
+    if (existing) {
+      await assertNoBlockClash(
+        patch.workerId ?? existing.workerId,
+        patch.date ?? existing.date,
+        patch.blocks,
+        id,
+      )
+    }
+  }
   await db.attendance.update(id, { ...patch, updatedAt: now() })
 }
 
@@ -224,6 +271,28 @@ export async function createOtherExpenseType(name: string): Promise<string> {
   const id = uuid()
   await db.otherExpenseTypes.add({ id, name: name.trim() } as OtherExpenseType)
   return id
+}
+
+// --- Category mapping (txn sub-category name → our type, §8) ----------------
+
+/** Persist (insert or update) a mapping for a source sub-category name. */
+export async function setCategoryMap(sourceName: string, type: SubCategory): Promise<void> {
+  const norm = normalizeCategoryName(sourceName)
+  const existing = await db.categoryMap
+    .filter((c) => normalizeCategoryName(c.sourceName) === norm)
+    .first()
+  if (existing) {
+    await db.categoryMap.update(existing.id, { type, sourceName })
+  } else {
+    await db.categoryMap.add({ id: uuid(), sourceName, type } as CategoryMap)
+  }
+}
+
+/** The user-saved type for a source name, if any (normalized match). */
+export async function getCategoryMap(sourceName: string): Promise<SubCategory | undefined> {
+  const norm = normalizeCategoryName(sourceName)
+  const hit = await db.categoryMap.filter((c) => normalizeCategoryName(c.sourceName) === norm).first()
+  return hit?.type
 }
 
 // --- Transaction assignment ------------------------------------------------

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/AppShell'
+import { BackButtonHandler } from '@/components/BackButtonHandler'
 import { LockGate } from '@/components/LockGate'
 import { Dashboard } from '@/screens/Dashboard'
 import { BuildingsList } from '@/screens/buildings/BuildingsList'
@@ -24,6 +25,7 @@ import { Settings } from '@/screens/Settings'
 export default function App() {
   return (
     <LockGate>
+      <BackButtonHandler />
       <Routes>
         {/* Browsing screens — bottom nav present */}
         <Route element={<AppShell />}>

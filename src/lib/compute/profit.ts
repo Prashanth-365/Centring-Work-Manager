@@ -5,6 +5,7 @@
 import type { WeekStart } from '../dates'
 import type { Attendance, Mold, SyncedTransaction, Worker } from '../types'
 import { foodForEntries, type FoodEntry } from './food'
+import { wageOnDate } from './wage'
 
 const sumAmt = (txns: SyncedTransaction[]) => txns.reduce((s, t) => s + t.amount, 0)
 
@@ -16,7 +17,8 @@ export function receiptsForMold(moldId: string, txns: SyncedTransaction[]): numb
   return sumAmt(txns.filter((t) => t.subCategory === 'OwnerReceipt' && t.moldId === moldId))
 }
 
-/** Labour cost for a building from attendance (Σ dayFraction × current dailyWage). */
+/** Labour cost for a building from attendance (Σ dayFraction × wage effective on
+ * that attendance's date, §7 — never from wage payments). */
 export function buildingLabour(
   buildingId: string,
   attendance: Attendance[],
@@ -24,7 +26,10 @@ export function buildingLabour(
 ): number {
   return attendance
     .filter((a) => a.buildingId === buildingId)
-    .reduce((s, a) => s + a.dayFraction * (workersById.get(a.workerId)?.dailyWage ?? 0), 0)
+    .reduce((s, a) => {
+      const worker = workersById.get(a.workerId)
+      return s + a.dayFraction * (worker ? wageOnDate(worker, a.date) : 0)
+    }, 0)
 }
 
 export interface BuildingMargin {

@@ -31,7 +31,7 @@ import {
   useTransactions,
   useWorkers,
 } from '@/lib/hooks'
-import { byId, computeBuilding, groupBy, moldOutstanding } from '@/lib/select'
+import { byId, buildingName, computeBuilding, groupBy, moldOutstanding } from '@/lib/select'
 import { overhead } from '@/lib/compute/profit'
 import { workerBalance } from '@/lib/compute/balance'
 import { weeklySummary } from '@/lib/compute/weekly'
@@ -182,7 +182,6 @@ export function Dashboard() {
                 <EmptyState icon={Building2} title="No active buildings" />
               ) : (
                 activeBuildings.map(({ building: b, margin, current, unpaidDoneAmount }) => {
-                  const owner = b.ownerId ? ownersById.get(b.ownerId) : undefined
                   return (
                     <Link
                       key={b.id}
@@ -190,13 +189,12 @@ export function Dashboard() {
                       className="block rounded-xl border border-border bg-card p-3.5 shadow-card transition active:scale-[0.99]"
                     >
                       <div className="flex items-start gap-3">
-                        <Thumb blob={b.photoThumb} name={b.name} square />
+                        <Thumb blob={b.photoThumb} name={buildingName(b, ownersById)} square />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2">
-                            <p className="truncate font-semibold">{b.name}</p>
+                            <p className="truncate font-semibold">{buildingName(b, ownersById)}</p>
                             <StatusPill status={b.status} kind="building" />
                           </div>
-                          {owner && <p className="truncate text-xs text-muted-foreground">{owner.name}</p>}
                           {current && (
                             <div className="mt-2 flex flex-wrap items-center gap-1.5">
                               <span className="text-xs text-muted-foreground">On {current.floorName}:</span>
@@ -233,7 +231,7 @@ export function Dashboard() {
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">
-                          {building.name} · {mold.floorName}
+                          {buildingName(building, ownersById)} · {mold.floorName}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
                           {owner ?? 'No owner'} · {days} days overdue
@@ -295,7 +293,7 @@ export function Dashboard() {
                       className="flex items-center justify-between gap-2 px-3.5 py-2.5 transition active:bg-accent"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{b.name}</p>
+                        <p className="truncate text-sm font-medium">{buildingName(b, ownersById)}</p>
                         <p className="tabular text-xs text-muted-foreground">
                           {money(revenue)} recd · {money(labour)} labour
                         </p>

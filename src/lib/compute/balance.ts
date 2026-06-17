@@ -7,6 +7,7 @@ import { BALANCE_SUBCATS } from '../constants'
 import type { WeekStart } from '../dates'
 import type { Attendance, SyncedTransaction, Worker } from '../types'
 import { foodForEntries, type FoodEntry } from './food'
+import { wageOnDate } from './wage'
 
 export interface WorkerBalance {
   wage: number
@@ -17,7 +18,7 @@ export interface WorkerBalance {
 }
 
 export function wageForEntries(worker: Worker, entries: Attendance[]): number {
-  return entries.reduce((s, e) => s + e.dayFraction * worker.dailyWage, 0)
+  return entries.reduce((s, e) => s + e.dayFraction * wageOnDate(worker, e.date), 0)
 }
 
 /** Σ of Wage/Advance/Food transactions — the label is informational; all reduce balance. */

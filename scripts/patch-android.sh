@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Idempotent tweaks to the freshly-generated android/ project.
-# The android/ folder is NOT committed â€” it is created by `npx cap add android`
+# The android/ folder is NOT committed — it is created by `npx cap add android`
 # in CI. Run this script right after that, before `npx cap sync android`.
 set -euo pipefail
 
 ANDROID_DIR="android"
 if [ ! -d "$ANDROID_DIR" ]; then
-  echo "patch-android: '$ANDROID_DIR' not found â€” run 'npx cap add android' first." >&2
+  echo "patch-android: '$ANDROID_DIR' not found — run 'npx cap add android' first." >&2
   exit 1
 fi
 
@@ -23,7 +23,7 @@ else
   echo "patch-android: WARNING variables.gradle not found, skipping SDK patch." >&2
 fi
 
-# 2. Ensure INTERNET permission exists (idempotent â€” Capacitor usually adds it).
+# 2. Ensure INTERNET permission exists (idempotent — Capacitor usually adds it).
 if [ -f "$MANIFEST" ]; then
   if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
     sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET" />\n\n    <application#' "$MANIFEST"

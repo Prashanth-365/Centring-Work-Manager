@@ -16,157 +16,221 @@ Single user, no accounts, all data on-device.
 ## Stack & architecture
 
 - **React + Vite + TypeScript**, **Tailwind** + a hand-rolled **shadcn/ui-style** kit
-  (Radix primitives in `src/components/ui/`).
+  (Radix primitives in `src/components/ui/`). Routing is `BrowserRouter` + `<Routes>`.
 - **Dexie.js / IndexedDB** — all data local. No backend, no server.
 - **PWA** via `vite-plugin-pwa` (installable + offline). Also packaged as an **Android APK**
   via **Capacitor** in CI.
-- Pure business logic lives in `src/lib/compute/` and is **unit-testable** (no React/Dexie).
-  Screens load data with Dexie `useLiveQuery` hooks (`src/lib/hooks.ts`) and pass arrays into
-  those pure functions. Writes go through `src/lib/repo.ts` (consistent ids/timestamps/codes).
+- Pure business logic lives in `src/lib/compute/` and is **unit-testable** (no React/Dexie) —
+  see the `*.test.ts` files run by **vitest** (`npm run test`). Screens load data with Dexie
+  `useLiveQuery` hooks (`src/lib/hooks.ts`) and pass arrays into those pure functions. Writes go
+  through `src/lib/repo.ts` (consistent ids/timestamps).
 
 **This is a separate app from the transaction app.** It must **never modify** the transaction
-app. It only **reads** that app's exported encrypted backup, **one-way**, via a **file picker**
-(v1). The decrypt happens in memory; only `Construction` transactions are persisted here.
+app. It only **reads** that app's exported backup, **one-way**, via a **file picker** or the
+**Google Picker**. The decrypt happens in memory; only `Construction` transactions are persisted.
 
 ### Key files
 ```
 src/lib/
-  db.ts          Dexie schema + seed (settings, otherExpenseTypes)
+  db.ts          Dexie schema (v2) + migration + seed (settings, otherExpenseTypes)
   types.ts       domain types
   crypto.ts      AES-256-GCM / PBKDF2-SHA256 (200k) + decryptFlexible()  ← txn-app interop point
-  sync.ts        read txn backup → extractConstruction() → upsert by UUID
+  sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint)
   backup.ts      this app's own encrypted backup / restore (cwm-backup-v1)
-  repo.ts        create/update helpers + quick-create (for combobox add-new)
+  repo.ts        create/update helpers, setWorkerWage, attendance block-clash guard, categoryMap CRUD
   hooks.ts       Dexie useLiveQuery hooks
-  select.ts      shared selectors (byId, groupBy, computeBuilding, currentMold)
-  env.ts         defensive VITE_* access (v2 Google Drive only)
-  compute/       shifts.ts · food.ts · balance.ts · profit.ts · weekly.ts
-src/components/  UI kit + shell (AppShell, BottomNav, PageHeader, FormScaffold, …)
-src/screens/     Dashboard, buildings/, molds/, workers/, owners/, attendance/, payments/, Weekly, More, Settings
+  select.ts      shared selectors (byId, groupBy, buildingName, computeBuilding, currentMold)
+  autoAdvance.ts status↔date runtime: runAutoAdvance() + startDailyAutoAdvance() (load/midnight/foreground)
+  native.ts      Capacitor wrappers (isNative, hardware back button, app-state)
+  biometric.ts   WebAuthn (web) / Capacitor biometric (native) unlock
+  drive.ts       Google Drive (Picker + REST) — DORMANT until VITE_GOOGLE_CLIENT_ID is set
+  env.ts         defensive VITE_* access (Google client id / redirect)
+  compute/       shifts.ts · food.ts · wage.ts · status.ts · balance.ts · profit.ts · weekly.ts (+ *.test.ts)
+src/components/  UI kit + shell (AppShell, BottomNav, BackButtonHandler, LockGate, PageHeader, FormScaffold, …)
+src/screens/     Dashboard, buildings/, molds/, workers/, owners/, attendance/, payments/, settings/, Weekly, More, Settings
 ```
 
 ## Data model (Dexie, all keyed on UUID `id`)
 
-- **buildings** — `id, code, name, ownerId?, location?, startDate?, endDate?, ratePerSqft?, status, photoThumb?, notes?`
-- **molds** (one mold = one floor; plinth/sump/lift/steps roll into that floor) — `id, buildingId, floorName, order, startDate?, endDate?, sqft?, billAmount?, billPdfLink?, workStatus, paymentStatus, notes?`
-- **workers** — `id, code, name, type(Helper|Carpenter|Outsider), dailyWage, phone?, active, photoThumb?, foodMode, foodBreakfast, foodLunch, foodPerDay?, foodPerWeek?, maxDaysPerWeek, notes?`
-- **owners** — `id, code, name, phone?, location?, photoThumb?, notes?`
-- **attendance** (= "work done") — `id, workerId, buildingId, moldId?, date, shiftFrom?, shiftTo?, blocks[], dayFraction, notes?`
-- **syncedTransactions** (snapshot + assignment of a Construction txn) — `id (the txn UUID), date, amount, direction, subCategory, description?, lastSeenAmount, assignmentStatus(unassigned|assigned|needsReview), buildingId?, moldId?, workerId?, materialDescription?, otherExpenseType?`
+- **buildings** — `id, ownerId?, location?, startDate?, endDate?, ratePerSqft?, status, photoThumb?, notes?`.
+  **No stored name** — the display name is **derived** as `"{owner.name} - {location}"` via
+  `buildingName()` in `select.ts`, so editing the owner or location updates it everywhere.
+- **molds** (one mold = one floor) — `id, buildingId, floorName, order, startDate?, endDate?, sqft?,
+  billAmount?, billPdfLink?, workStatus, paymentStatus, notes?`
+- **workers** — `id, name, type(Helper|Carpenter|Outsider), wageHistory[], phone?, active, photoThumb?,
+  foodMode, foodBreakfast, foodLunch, foodPerDay?, foodPerWeek?, maxDaysPerWeek, notes?`.
+  **`wageHistory` is `{ effectiveFrom, dailyWage }[]`** (effective-dated, §7) — read via
+  `wageOnDate()` / `currentWage()` (`compute/wage.ts`), never `[0]`.
+- **owners** — `id, name, phone?, location?, photoThumb?, notes?`
+- **attendance** (= "work done") — `id, workerId, buildingId, moldId?, date, shiftFrom?, shiftTo?,
+  blocks[], dayFraction, notes?`. A worker can't have the **same block twice on a date** — enforced
+  in `repo.ts` (`blocksTakenOnDay`/`assertNoBlockClash`) and surfaced in the form.
+- **syncedTransactions** — `id (the txn UUID), date, dateTime?, amount, direction, txnType?,
+  subCategory (our mapped type), typeName? (raw source name), importFingerprint?, description?,
+  lastSeenAmount, assignmentStatus(unassigned|assigned|needsReview), buildingId?, moldId?, workerId?,
+  materialDescription?, otherExpenseType?`
+- **categoryMap** — `id, sourceName, type` (txn sub-category NAME → our `SubCategory`)
 - **otherExpenseTypes** — `id, name` (seeded `FinanceCost`, `Theft`)
-- **settings** (single row `id:'app'`) — shift blocks, default food, `collectAlertDays`, `weekStartsOn`, `appLock`
+- **settings** (single row `id:'app'`) — shift blocks, default food, `collectAlertDays`, `weekStartsOn`,
+  `appLock { enabled, method('pin'|'biometric'), pinHash?, salt?, webauthnCredId?, relockMinutes? }`
+
+> **No `dailyFood` table.** Food is day-wise but **computed live** (group attendance by worker+date,
+> union the blocks) — identical result to a materialized store, no denormalization to keep in sync.
+> See "Why" below. Codes (short slugs) were removed from buildings/workers/owners — assignment is by
+> selecting the entity in-app.
+
+**Dexie v2 migration** (`db.ts`): drops `name`/`code` from buildings, `code` from workers/owners,
+converts the old single `dailyWage` → `wageHistory: [{ effectiveFrom: <created date>, dailyWage }]`,
+and adds the `categoryMap` table + an `importFingerprint` index.
 
 ## Core business logic
 
 **Shifts → dayFraction** (`compute/shifts.ts`): 3 configurable blocks (default 06:00–09:00,
 09:30–13:00, 14:00–18:00), each = 0.5 day. A from–to time auto-maps to blocks (≥50% overlap);
 blocks are also toggled manually. `dayFraction = 0.5 × blocks worked, capped at 1.5` (3rd block
-is OT at **normal** rate). **Meals:** breakfast if block 1 worked, lunch if block 3 (block 2
-alone = no meal).
+is OT at **normal** rate).
 
-**Food (calculated, `compute/food.ts`)** — three modes:
-- `meal`: breakfast/lunch amounts per the meal flags above.
-- `fixedPerDay`: `foodPerDay × dayFraction`.
-- `fixedPerWeek`: per ISO-week, `foodPerWeek × (Σ dayFraction that week / maxDaysPerWeek)`.
+**Meals (day-wise, §6):** computed from the **union of all blocks worked that day** (across
+buildings), once per worker per day — **breakfast needs BOTH blocks 1 and 2; lunch needs BOTH 2
+and 3.** So `{1,2}→breakfast`, `{2,3}→lunch`, `{1,2,3}→both`, **`{1,3}→none`** (block 2 is required
+for any meal). `mealFlags()` in `shifts.ts`.
+
+**Food (calculated, `compute/food.ts`)** — three modes, all day-wise:
+- `meal`: breakfast/lunch amounts per the day's union (above).
+- `fixedPerDay`: `foodPerDay × the day's union day-fraction`.
+- `fixedPerWeek`: per ISO-week, `foodPerWeek × (Σ day-fractions that week / maxDaysPerWeek)`.
+
+**Effective-dated wages (`compute/wage.ts`, §7):** `wageOnDate(worker, date)` = the entry with the
+greatest `effectiveFrom ≤ date` (fallback: earliest rate). Editing a wage **appends** an entry
+(`repo.setWorkerWage` / `withWage`), so past attendance keeps its old rate.
 
 **Two separate money layers (DO NOT merge them):**
 
 - **Worker balance — cash settlement** (`compute/balance.ts`):
-  `owed = wage (Σ dayFraction × dailyWage) + calculated food`;
+  `owed = wage (Σ dayFraction × wageOnDate) + calculated food`;
   `paid = Σ assigned txns with subCategory ∈ {Wage, Advance, Food}`;
-  `balance = owed − paid` (>0 ⇒ you owe the worker). **Transport & Rent assigned to a worker do
-  NOT affect the balance** — they're provisions → overhead.
+  `balance = owed − paid`. **Transport & Rent assigned to a worker do NOT affect the balance** —
+  they're provisions → overhead.
 - **Profit — accrual / cost-based** (`compute/profit.ts`):
-  per building `margin = OwnerReceipts − attendance labour` (labour from **attendance**, never
-  from wage payments); business-wide `overhead = calculated food + Transport + Rent + Material +
-  OtherExpense`; `total profit = Σ building margins − overhead`.
+  per building `margin = OwnerReceipts − attendance labour` (labour from **attendance** at the
+  **wage effective on each attendance date**, never from wage payments); business-wide
+  `overhead = calculated food + Transport + Rent + Material + OtherExpense`;
+  `total profit = Σ building margins − overhead`.
 
 **No-double-count rules (load-bearing — keep them true):**
 1. **Food is counted once**, as a *calculated* cost in overhead. A `Food` *transaction* only
-   reduces the worker's balance (cash given); it is never re-added as a cost.
-2. **Building labour comes from attendance**, not from `Wage` transactions.
+   reduces the worker's balance; it is never re-added as a cost.
+2. **Building labour comes from attendance** (effective-dated wage), not from `Wage` transactions.
 3. **Wage/Advance/Food transactions are cash settlement** (balance only), never re-added as cost.
 
-`compute/weekly.ts` builds the payroll register: per worker per Mon–Sun day-fractions, totals,
-wage, food, paid (txns dated that week), current, previous balance (cumulative before the week),
-final balance. Cumulative lifetime balance is the source of truth; weekly buckets use the
-transaction date for "paid".
+`compute/weekly.ts` builds the payroll register: per worker per Mon–Sun day-fractions, totals, wage
+(per-day at the effective rate, with a `wageChangedMidWeek` flag), food, paid (txns dated that week),
+current, previous balance (cumulative before the week), final balance.
+
+## Status ↔ date engine (`compute/status.ts` + `autoAdvance.ts`, §4)
+
+Status and dates stay in sync **both directions** and auto-advance as real dates arrive.
+
+- **Date → status** (pure, in `status.ts`): building `Yet to Start / In Progress / Completed` from
+  start/end dates; **On Hold / Closed are manual and win** (`deriveBuildingStatus` returns null).
+  Molds mirror this on their own dates (`deriveMoldWorkStatus`). **Mold payment status is NOT
+  date-driven** — `deriveMoldPaymentStatus(bill, received)` → Not Billed / Billed / Partly Paid / Paid.
+- **Status → date** (`datesForStatusChange` / `moldDatesForStatusChange`): the forms apply these when
+  the user picks a status (e.g. In Progress sets `startDate=today`; Completed sets `endDate=today`).
+- **Auto-advance** (`autoAdvance.runAutoAdvance`): on app load, at local midnight, and on foreground
+  (`startDailyAutoAdvance`, mounted in `LockGate`), recompute and persist any changed status. A
+  building **auto-Closes** when Completed AND every mold is Paid (`shouldAutoClose`). Forms call
+  `runAutoAdvance()` after save so payment/work status reconcile immediately.
 
 ## Transaction integration convention
 
-- The txn app writes `category = "Construction"` + a short `subCategory`
-  (`OwnerReceipt, Wage, Advance, Food, Transport, Rent, Material, OtherExpense`).
-- **Sync** (`sync.ts`): decrypt the txn backup in memory → keep `Construction` → **upsert by
-  `id` (UUID), NEVER `slNo`** (slNo re-sequences on backdated inserts). New `id` → `unassigned`.
-  Existing `id` whose `amount !== lastSeenAmount` → **`needsReview`** (keeps the prior
-  assignment, flags it); `lastSeenAmount` is always updated.
-- **Review queue** = `unassigned` + `needsReview`. Assignment fields are chosen **by
-  subCategory** (`SUBCATEGORY_FIELDS` in `constants.ts`): OwnerReceipt→building(+mold);
-  Wage/Advance/Food/Transport/Rent→worker; Material→free-text; OtherExpense→type (add-new).
-  All entity pickers are autocomplete + **add-new-by-typing** (the `Combobox`).
-- **⚠️ The one interop point:** `crypto.ts → decryptFlexible()` plus the `*_KEYS` lists in
-  `sync.ts`. They auto-detect common envelope/field shapes; this was built **without a real
-  sample export**, so verify against one and adjust `CRYPTO_FIELD_NAMES` / `PACKED_LAYOUT` /
-  `*_KEYS` if a real file fails. Backups use the same crypto scheme (AES-256-GCM / PBKDF2-SHA256
-  / 200k).
+- The txn app exports `{ data: { categories:[{id,name,parentID}], transactions:[{id, dateTime,
+  categoryId, subCategoryId, amount, txnType, importFingerprint, …}] } }`. Top-level category
+  `name === "Construction"` (`parentID == null`) is the root; its children are the sub-categories.
+- **Sync** (`sync.ts`): `extractConstruction()` parses that shape (with a heuristic fallback for
+  older/unknown exports), resolves each sub-category **name → our type** via the `categoryMap`
+  (auto-matched + persisted on first sight; correct any in **Settings → Category mapping**), and
+  **upserts by `id` (UUID), NEVER `slNo`**. New `id` → `unassigned`. Existing `id` whose
+  `amount !== lastSeenAmount` → **`needsReview`** (keeps the prior assignment). `importFingerprint`
+  is a secondary identity signal: if an assigned txn's `id` disappears and a new txn shares its
+  fingerprint, the **assignment carries across**. The passphrase is **optional** — a plain-JSON
+  backup is read directly.
+- **Review queue** = `unassigned` + `needsReview`. Assignment fields are chosen **by subCategory**
+  (`SUBCATEGORY_FIELDS`): OwnerReceipt→building(+mold); Wage/Advance/Food/Transport/Rent→worker;
+  Material→free-text; OtherExpense→type (add-new). All entity pickers are autocomplete `Combobox`es.
+- **⚠️ The one crypto interop point:** `crypto.ts → decryptFlexible()`. Built without a real sample
+  export — if a real encrypted file fails, adjust `CRYPTO_FIELD_NAMES` / `PACKED_LAYOUT`. Field-name
+  detection for the JSON shape lives in `sync.ts` (`*_KEYS`).
 
 ## Statuses & dashboard
 
-- **Building:** `Yet to Start, In Progress, On Hold, Completed, Closed`
-  (Completed = work done; **Closed = work done AND fully paid**).
-- **Mold work:** `Not Started, In Progress, Done/Removed`. **Mold payment:** `Not Billed, Billed,
-  Partly Paid, Paid`.
-- **Dashboard** (`screens/Dashboard.tsx`): operational top first — active buildings (current mold
-  + statuses, running margin, "unpaid ₹X" badge), a **Go-collect** list (Done/Removed & not Paid
-  past `collectAlertDays`, default 18, with aging), and a "transactions to assign: N" nudge — then
-  the **money** section: total profit after overhead, receivables, money owed to workers, this
-  week's wages, overhead this month, profit by building. Closed buildings are hidden from the
-  operational top.
+- **Building:** `Yet to Start, In Progress, On Hold, Completed, Closed` (Closed = work done AND fully paid).
+- **Mold work:** `Not Started, In Progress, Done/Removed`. **Mold payment** (auto-derived): `Not Billed,
+  Billed, Partly Paid, Paid`.
+- **Dashboard** (`screens/Dashboard.tsx`): operational top first — active buildings (derived name,
+  current mold + statuses, running margin, "unpaid ₹X" badge), a **Go-collect** list (Done/Removed &
+  not Paid past `collectAlertDays`, default 18, with aging), and a "transactions to assign: N" nudge —
+  then the **money** section: total profit after overhead, receivables, money owed to workers, this
+  week's wages, overhead this month, profit by building. Closed buildings are hidden from the top.
+
+## App lock, biometrics & Google Drive
+
+- **App lock** (`LockGate.tsx`): a PIN (PBKDF2 hash) is the base + fallback. **Biometric unlock**
+  (`biometric.ts`) layers on top — **WebAuthn** platform authenticator on web (credential id in
+  `appLock.webauthnCredId`; ceremony success = unlock, no server), a **Capacitor biometric plugin**
+  on the APK (lazy-loaded). The app **re-locks** after being backgrounded longer than `relockMinutes`
+  (default 2) via `visibilitychange` + native `appStateChange`.
+- **Hardware back button** (`native.ts` + `components/BackButtonHandler.tsx`): on Android, Back pops
+  router history and exits only when already on a root tab (`/`, `/buildings`, `/workers`, `/payments`,
+  `/more`).
+- **Google Drive** (`drive.ts`): **built but dormant** until `VITE_GOOGLE_CLIENT_ID` /
+  `VITE_OAUTH_REDIRECT_URL` are set (`isDriveConfigured`). When configured: Google Picker selects the
+  txn backup (Sync screen) and the app's own backups upload/restore via the Drive REST API (Settings).
+  The offline file picker always works regardless.
 
 ## Deployment
 
-- **Web (Vercel):** import the repo (Vite preset auto-detected); push to `main` → auto-build &
-  deploy. `vercel.json` adds the SPA fallback rewrite so client routes survive a refresh.
-- **Android APK (Capacitor + GitHub Actions):** `.github/workflows/build-apk.yml` on push to
-  `main`, on `v*` tags, and manual dispatch — Node 20 / JDK 17 / Android SDK → `npm install`
-  (never `npm ci`; no lockfile committed) → `npm run build` → `npx cap add android` (the
-  `android/` folder is **not** committed) → `scripts/patch-android.sh` (idempotent: SDK versions,
-  INTERNET permission) → `npx cap sync android` → `./gradlew assembleDebug` → upload artifact
-  **`centering-debug-apk`**; on `v*` tags also attach the APK to a GitHub Release.
-  `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager",
-  webDir `dist`.
-- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) are **v2-only** (Google Drive
-  auto-fetch). Vercel project settings (Sensitive = OFF — `VITE_*` ships in the client bundle)
-  and GH Actions secrets. v1 must build/deploy fine without them — read them defensively via
-  `src/lib/env.ts`.
+- **Web (Vercel):** import the repo (Vite preset); push to `main` → auto-build & deploy. `vercel.json`
+  adds the SPA fallback rewrite.
+- **Android APK (Capacitor + GitHub Actions):** `.github/workflows/build-apk.yml` → Node 20 / JDK 17 /
+  Android SDK → `npm install` (no lockfile committed) → `npm run build` → `npx cap add android`
+  (`android/` not committed) → `scripts/patch-android.sh` (idempotent: SDK versions, INTERNET
+  permission) → `npx cap sync android` (pulls in `@capacitor/app` + the biometric plugin) →
+  `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags attach to a Release.
+  `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager", webDir `dist`.
+- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) enable Drive. `VITE_*` ships in the
+  client bundle (Vercel "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine
+  without them (offline path unaffected).
 
 ## Why (deliberate decisions — don't undo)
 
-- **Separate apps:** keeps the transaction app clean and single-purpose; this app is read-only
-  toward it. No shared DB, no coupling beyond the backup file format.
-- **UUID `id`, never `slNo`:** `slNo` deliberately re-sequences when a backdated txn is inserted,
-  so it's not stable. UUIDs survive re-import and a future cloud merge, and let amount-change
-  re-flagging work.
-- **Overhead as a separate business-wide bucket** (not per-building): food/transport/rent/
-  material/other aren't cleanly attributable to one building; lumping them per-building would
-  distort per-building margins.
-- **Food calculated, not transactional:** food is derived from attendance + per-worker config so
-  it's consistent everywhere (weekly register and overhead) and never double-counted with any
-  `Food` cash payment.
-- **File picker before Drive:** ships a working v1 with zero OAuth/secrets; Drive auto-fetch is a
-  v2 add-on, not a v1 dependency.
+- **Separate apps / read-only toward the txn app / UUID `id` not `slNo`:** keeps the txn app clean;
+  `slNo` re-sequences on backdated inserts, UUIDs survive re-import and let amount-change re-flagging
+  and fingerprint carry-over work.
+- **Derived building names:** the name is `{owner} - {location}` so renaming an owner or fixing a
+  location updates it everywhere with zero data drift; no stale stored copy.
+- **Effective-dated wages (`wageHistory`):** raising a worker's rate must not retroactively change the
+  cost of past attendance, so wages are versioned and labour is computed at the rate effective on each
+  attendance date.
+- **Food calculated day-wise, not transactional, not a stored table:** food derives from attendance +
+  per-worker config so it's consistent in the weekly register and overhead and never double-counted
+  with a `Food` cash payment. Computing it live (vs. a materialized `dailyFood` row) avoids a
+  denormalized store that would have to be recomputed and kept in sync on every attendance write.
+- **Overhead as a separate business-wide bucket** (not per-building): food/transport/rent/material/
+  other aren't cleanly attributable to one building; per-building would distort margins.
+- **Mold payment status auto-derived from bill + receipts:** there's one source of truth (the assigned
+  OwnerReceipts vs. the bill), so there's no manual status to drift out of sync.
 
-## Known limitations & v2 roadmap
+## Known limitations & roadmap
 
-- **v1 sync is manual** (file picker + passphrase). **v2:** Google Drive auto-fetch (the
-  `VITE_GOOGLE_*` env vars exist for this).
-- App lock is **PIN-only** (PBKDF2 hash); biometric/WebAuthn not yet implemented.
-- `decryptFlexible()` is heuristic until validated against a real txn export.
-- Bundle is one ~170 KB-gzipped chunk (route-level code-splitting is a possible optimization).
-- Worker labour uses the worker's **current** `dailyWage` (historical wage changes aren't
-  versioned).
+- **Google Drive is built but unverified end-to-end** — it needs a real `VITE_GOOGLE_CLIENT_ID` + OAuth
+  consent (and an API key may improve the Picker). The OAuth flow couldn't be exercised in CI/headless.
+- **Native biometric is unverified on-device** — the web WebAuthn path is testable; the APK path uses a
+  Capacitor plugin that needs a real device/build to confirm.
+- `decryptFlexible()` is heuristic until validated against a **real encrypted** txn export.
+- Bundle is one ~180 KB-gzipped chunk (route-level code-splitting is a possible optimization).
 
-## Run / build / deploy locally
+## Run / build / test / deploy locally
 
 ```bash
 npm install
@@ -174,6 +238,7 @@ npm run dev        # http://localhost:5173
 npm run build      # → dist/ (+ service worker)
 npm run preview    # serve the built app
 npm run typecheck  # tsc --noEmit
+npm run test       # vitest — pure compute unit tests
 
 # Android (needs Android SDK + JDK 17 locally; CI does this automatically):
 npm run build && npx cap add android && npm run android:patch && npx cap sync android

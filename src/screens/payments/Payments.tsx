@@ -11,12 +11,13 @@ import {
   useAllMolds,
   useBuildings,
   useOtherExpenseTypes,
+  useOwners,
   useReviewQueue,
   useTransactions,
   useWorkers,
 } from '@/lib/hooks'
 import { unassignTransaction } from '@/lib/repo'
-import { byId } from '@/lib/select'
+import { byId, buildingName } from '@/lib/select'
 import { formatDate } from '@/lib/dates'
 import { money } from '@/lib/format'
 import type { SyncedTransaction } from '@/lib/types'
@@ -26,11 +27,13 @@ export function Payments() {
   const queue = useReviewQueue()
   const allTxns = useTransactions()
   const buildings = useBuildings()
+  const owners = useOwners()
   const workers = useWorkers()
   const molds = useAllMolds()
   const otherTypes = useOtherExpenseTypes()
 
   const buildingsById = React.useMemo(() => byId(buildings), [buildings])
+  const ownersById = React.useMemo(() => byId(owners), [owners])
   const workersById = React.useMemo(() => byId(workers), [workers])
   const moldsById = React.useMemo(() => byId(molds), [molds])
 
@@ -61,7 +64,7 @@ export function Payments() {
 
   function targetLabel(t: SyncedTransaction): string {
     if (t.buildingId) {
-      const b = buildingsById.get(t.buildingId)?.name ?? 'Building'
+      const b = buildingName(buildingsById.get(t.buildingId), ownersById)
       const m = t.moldId ? moldsById.get(t.moldId)?.floorName : undefined
       return m ? `${b} · ${m}` : b
     }
@@ -120,6 +123,7 @@ export function Payments() {
                   key={t.id}
                   txn={t}
                   buildings={buildings}
+                  owners={owners}
                   workers={workers}
                   molds={molds}
                   otherTypes={otherTypes}

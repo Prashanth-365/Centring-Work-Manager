@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { useAllAttendance, useSettings, useTransactions, useWorkers } from '@/lib/hooks'
 import { groupBy } from '@/lib/select'
 import { workerBalance } from '@/lib/compute/balance'
+import { currentWage } from '@/lib/compute/wage'
 import { money } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { WeekStart } from '@/lib/dates'
@@ -30,7 +31,7 @@ export function WorkersList() {
   const filtered = workers
     .filter((w) => (tab === 'active' ? w.active : !w.active))
     .filter((w) =>
-      !q ? true : [w.name, w.code, w.phone, w.type].filter(Boolean).join(' ').toLowerCase().includes(q.toLowerCase()),
+      !q ? true : [w.name, w.phone, w.type].filter(Boolean).join(' ').toLowerCase().includes(q.toLowerCase()),
     )
 
   const activeCount = workers.filter((w) => w.active).length
@@ -100,7 +101,7 @@ export function WorkersList() {
                     <p className="truncate font-semibold">{w.name}</p>
                     <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Badge variant="muted">{w.type}</Badge>
-                      {money(w.dailyWage)}/day
+                      {money(currentWage(w))}/day
                     </p>
                   </div>
                   <div className="text-right">

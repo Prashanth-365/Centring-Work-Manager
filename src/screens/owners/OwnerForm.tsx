@@ -18,7 +18,6 @@ export function OwnerForm() {
   const navigate = useNavigate()
 
   const [name, setName] = React.useState('')
-  const [code, setCode] = React.useState('')
   const [phone, setPhone] = React.useState('')
   const [location, setLocation] = React.useState('')
   const [notes, setNotes] = React.useState('')
@@ -32,7 +31,6 @@ export function OwnerForm() {
     if (existing && !loaded.current) {
       loaded.current = true
       setName(existing.name)
-      setCode(existing.code)
       setPhone(existing.phone ?? '')
       setLocation(existing.location ?? '')
       setNotes(existing.notes ?? '')
@@ -49,7 +47,6 @@ export function OwnerForm() {
     setSaving(true)
     const data = {
       name: name.trim(),
-      code: code.trim() || undefined,
       phone: phone.trim() || undefined,
       location: location.trim() || undefined,
       notes: notes.trim() || undefined,
@@ -93,16 +90,11 @@ export function OwnerForm() {
         )}
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Code" hint="Auto if blank">
-          {(fid) => <Input id={fid} value={code} onChange={(e) => setCode(e.target.value)} />}
-        </Field>
-        <Field label="Phone">
-          {(fid) => (
-            <Input id={fid} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile" />
-          )}
-        </Field>
-      </div>
+      <Field label="Phone">
+        {(fid) => (
+          <Input id={fid} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile" />
+        )}
+      </Field>
 
       <Field label="Location">
         {(fid) => (

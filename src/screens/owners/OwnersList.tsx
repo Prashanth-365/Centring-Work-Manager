@@ -22,7 +22,7 @@ export function OwnersList() {
   const moldsByBuilding = React.useMemo(() => groupBy(molds, (m) => m.buildingId), [molds])
 
   const filtered = owners.filter((o) =>
-    !q ? true : [o.name, o.code, o.phone, o.location].filter(Boolean).join(' ').toLowerCase().includes(q.toLowerCase()),
+    !q ? true : [o.name, o.phone, o.location].filter(Boolean).join(' ').toLowerCase().includes(q.toLowerCase()),
   )
 
   return (

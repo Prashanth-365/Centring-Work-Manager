@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/select'
 import { useBuilding, useOwners } from '@/lib/hooks'
 import { createBuilding, deleteBuilding, quickCreateOwner, updateBuilding } from '@/lib/repo'
+import { datesForStatusChange } from '@/lib/compute/status'
+import { byId, buildingName } from '@/lib/select'
 import { BUILDING_STATUSES } from '@/lib/constants'
 import type { BuildingStatus } from '@/lib/types'
 
@@ -28,8 +30,6 @@ export function BuildingForm() {
   const owners = useOwners()
   const navigate = useNavigate()
 
-  const [name, setName] = React.useState('')
-  const [code, setCode] = React.useState('')
   const [ownerId, setOwnerId] = React.useState<string>()
   const [location, setLocation] = React.useState('')
   const [rate, setRate] = React.useState('')
@@ -46,8 +46,6 @@ export function BuildingForm() {
   React.useEffect(() => {
     if (existing && !loaded.current) {
       loaded.current = true
-      setName(existing.name)
-      setCode(existing.code)
       setOwnerId(existing.ownerId)
       setLocation(existing.location ?? '')
       setRate(existing.ratePerSqft != null ? String(existing.ratePerSqft) : '')
@@ -59,18 +57,35 @@ export function BuildingForm() {
     }
   }, [existing])
 
+  // The building's name is derived (§3) — preview it live as the user picks.
+  const ownersById = React.useMemo(() => byId(owners), [owners])
+  const derivedName = buildingName({ ownerId, location: location.trim() || undefined }, ownersById)
+
+  /** Status → date: applying the spec's bidirectional rules as the user picks. */
+  function applyStatus(next: BuildingStatus) {
+    setStatus(next)
+    const patch = datesForStatusChange(next, {
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    })
+    if ('startDate' in patch) setStartDate(patch.startDate ?? '')
+    if ('endDate' in patch) setEndDate(patch.endDate ?? '')
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) {
-      setError('Name is required')
+    if (!ownerId) {
+      setError('Pick an owner — the building name is "{owner} - {location}".')
+      return
+    }
+    if (!location.trim()) {
+      setError('Location is required — it forms the building name.')
       return
     }
     setSaving(true)
     const data = {
-      name: name.trim(),
-      code: code.trim() || undefined,
       ownerId,
-      location: location.trim() || undefined,
+      location: location.trim(),
       ratePerSqft: rate ? Number(rate) : undefined,
       status,
       startDate: startDate || undefined,
@@ -90,6 +105,7 @@ export function BuildingForm() {
   return (
     <FormScaffold
       title={editing ? 'Edit building' : 'New building'}
+      subtitle={derivedName}
       onSubmit={submit}
       submitting={saving}
       footerExtra={
@@ -100,66 +116,57 @@ export function BuildingForm() {
         ) : undefined
       }
     >
-      <PhotoPicker value={photo} onChange={setPhoto} name={name || 'Building'} />
+      <PhotoPicker value={photo} onChange={setPhoto} name={derivedName} />
 
-      <Field label="Name" required error={error}>
-        {(fid) => (
-          <Input
-            id={fid}
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value)
-              setError('')
-            }}
-            placeholder="e.g. Ramesh Residence"
-          />
-        )}
-      </Field>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Code" hint="Auto if blank">
-          {(fid) => (
-            <Input id={fid} value={code} onChange={(e) => setCode(e.target.value)} placeholder="RAMRES" />
-          )}
-        </Field>
-        <Field label="Rate / sqft">
-          {(fid) => (
-            <Input
-              id={fid}
-              type="number"
-              inputMode="decimal"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
-              placeholder="₹"
-            />
-          )}
-        </Field>
-      </div>
-
-      <Field label="Owner">
+      <Field label="Owner" required error={error}>
         <Combobox
           options={owners.map((o) => ({ value: o.id, label: o.name, sublabel: o.phone }))}
           value={ownerId}
-          onChange={setOwnerId}
+          onChange={(v) => {
+            setOwnerId(v)
+            setError('')
+          }}
           onCreate={quickCreateOwner}
           placeholder="Select or add owner"
           allowClear
         />
       </Field>
 
-      <Field label="Location">
+      <Field label="Location" required hint="Used in the building's name">
         {(fid) => (
           <Input
             id={fid}
             value={location}
-            onChange={(e) => setLocation(e.target.value)}
+            onChange={(e) => {
+              setLocation(e.target.value)
+              setError('')
+            }}
             placeholder="Area / street"
           />
         )}
       </Field>
 
+      <Field label="Name" hint="Auto from owner + location">
+        <div className="flex h-11 items-center rounded-lg border border-dashed border-input bg-muted/40 px-3 text-base text-muted-foreground">
+          {derivedName}
+        </div>
+      </Field>
+
+      <Field label="Rate / sqft">
+        {(fid) => (
+          <Input
+            id={fid}
+            type="number"
+            inputMode="decimal"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            placeholder="₹"
+          />
+        )}
+      </Field>
+
       <Field label="Status">
-        <Select value={status} onValueChange={(v) => setStatus(v as BuildingStatus)}>
+        <Select value={status} onValueChange={(v) => applyStatus(v as BuildingStatus)}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>

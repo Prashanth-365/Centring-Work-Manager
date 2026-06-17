@@ -5,6 +5,7 @@ import { FormScaffold } from '@/components/FormScaffold'
 import { Field } from '@/components/Field'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -14,11 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useBuilding, useMold } from '@/lib/hooks'
+import { useAllMolds, useBuilding, useMold, useOwner } from '@/lib/hooks'
 import { createMold, deleteMold, updateMold } from '@/lib/repo'
-import { MOLD_PAYMENT_STATUSES, MOLD_WORK_STATUSES } from '@/lib/constants'
-import type { MoldPaymentStatus, MoldWorkStatus } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import { moldDatesForStatusChange } from '@/lib/compute/status'
+import { runAutoAdvance } from '@/lib/autoAdvance'
+import { byId, buildingName } from '@/lib/select'
+import { MOLD_WORK_STATUSES } from '@/lib/constants'
+import type { MoldWorkStatus } from '@/lib/types'
 
 const FLOOR_SUGGESTIONS = [
   'Ground Floor',
@@ -35,6 +38,8 @@ export function MoldForm() {
   const existing = useMold(params.id)
   const buildingId = editing ? existing?.buildingId : params.buildingId
   const building = useBuilding(buildingId)
+  const owner = useOwner(building?.ownerId)
+  const allMolds = useAllMolds()
   const navigate = useNavigate()
 
   const [floorName, setFloorName] = React.useState('')
@@ -42,7 +47,6 @@ export function MoldForm() {
   const [billAmount, setBillAmount] = React.useState('')
   const [billPdfLink, setBillPdfLink] = React.useState('')
   const [workStatus, setWorkStatus] = React.useState<MoldWorkStatus>('Not Started')
-  const [paymentStatus, setPaymentStatus] = React.useState<MoldPaymentStatus>('Not Billed')
   const [startDate, setStartDate] = React.useState('')
   const [endDate, setEndDate] = React.useState('')
   const [notes, setNotes] = React.useState('')
@@ -59,12 +63,31 @@ export function MoldForm() {
       setBillAmount(existing.billAmount != null ? String(existing.billAmount) : '')
       setBillPdfLink(existing.billPdfLink ?? '')
       setWorkStatus(existing.workStatus)
-      setPaymentStatus(existing.paymentStatus)
       setStartDate(existing.startDate ?? '')
       setEndDate(existing.endDate ?? '')
       setNotes(existing.notes ?? '')
     }
   }, [existing])
+
+  // Floor name is an inline combobox of previously-used names (§11) + the common
+  // suggestions; free typing adds a new one.
+  const floorOptions = React.useMemo(() => {
+    const names = new Set<string>(FLOOR_SUGGESTIONS)
+    for (const m of allMolds) if (m.floorName?.trim()) names.add(m.floorName.trim())
+    if (floorName.trim()) names.add(floorName.trim())
+    return [...names].map((n) => ({ value: n, label: n }))
+  }, [allMolds, floorName])
+
+  /** Work status → date (§4) as the user picks. */
+  function applyWorkStatus(next: MoldWorkStatus) {
+    setWorkStatus(next)
+    const patch = moldDatesForStatusChange(next, {
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    })
+    if ('startDate' in patch) setStartDate(patch.startDate ?? '')
+    if ('endDate' in patch) setEndDate(patch.endDate ?? '')
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -74,30 +97,30 @@ export function MoldForm() {
     }
     if (!buildingId) return
     setSaving(true)
+    // Payment status is NOT set here — it auto-derives from bill + owner receipts.
     const data = {
       floorName: floorName.trim(),
       sqft: sqft ? Number(sqft) : undefined,
       billAmount: billAmount ? Number(billAmount) : undefined,
       billPdfLink: billPdfLink.trim() || undefined,
       workStatus,
-      paymentStatus,
       startDate: startDate || undefined,
       endDate: endDate || undefined,
       notes: notes.trim() || undefined,
     }
     if (editing) {
       await updateMold(params.id!, data)
-      navigate(`/molds/${params.id}`, { replace: true })
     } else {
       await createMold({ buildingId, ...data })
-      navigate(`/buildings/${buildingId}`, { replace: true })
     }
+    await runAutoAdvance() // reconcile payment/work status immediately
+    navigate(editing ? `/molds/${params.id}` : `/buildings/${buildingId}`, { replace: true })
   }
 
   return (
     <FormScaffold
       title={editing ? 'Edit floor' : 'New floor / mold'}
-      subtitle={building?.name}
+      subtitle={buildingName(building, byId(owner ? [owner] : []))}
       onSubmit={submit}
       submitting={saving}
       footerExtra={
@@ -108,36 +131,20 @@ export function MoldForm() {
         ) : undefined
       }
     >
-      <Field label="Floor name" required error={error}>
-        {(fid) => (
-          <Input
-            id={fid}
-            value={floorName}
-            onChange={(e) => {
-              setFloorName(e.target.value)
-              setError('')
-            }}
-            placeholder="e.g. Ground Floor"
-          />
-        )}
+      <Field label="Floor name" required error={error} hint="One mold = one floor (§2)">
+        <Combobox
+          options={floorOptions}
+          value={floorName || undefined}
+          onChange={(v) => {
+            setFloorName(v ?? '')
+            setError('')
+          }}
+          onCreate={(label) => label}
+          createLabel={(q) => `Use “${q}”`}
+          placeholder="Select or type a floor"
+          searchPlaceholder="e.g. Ground Floor"
+        />
       </Field>
-      <div className="-mt-2 flex flex-wrap gap-1.5">
-        {FLOOR_SUGGESTIONS.map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFloorName(f)}
-            className={cn(
-              'rounded-full border px-2.5 py-1 text-xs transition',
-              floorName === f
-                ? 'border-primary bg-primary/10 text-primary'
-                : 'border-border text-muted-foreground hover:bg-accent',
-            )}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Sqft">
@@ -145,7 +152,7 @@ export function MoldForm() {
             <Input id={fid} type="number" inputMode="decimal" value={sqft} onChange={(e) => setSqft(e.target.value)} />
           )}
         </Field>
-        <Field label="Bill amount">
+        <Field label="Bill amount" hint="Drives payment status">
           {(fid) => (
             <Input
               id={fid}
@@ -159,36 +166,20 @@ export function MoldForm() {
         </Field>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Work status">
-          <Select value={workStatus} onValueChange={(v) => setWorkStatus(v as MoldWorkStatus)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MOLD_WORK_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Payment status">
-          <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v as MoldPaymentStatus)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MOLD_PAYMENT_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
+      <Field label="Work status" hint="Auto-advances from the dates below">
+        <Select value={workStatus} onValueChange={(v) => applyWorkStatus(v as MoldWorkStatus)}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MOLD_WORK_STATUSES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Start date">

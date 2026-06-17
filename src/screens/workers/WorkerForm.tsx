@@ -17,8 +17,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSettings, useWorker } from '@/lib/hooks'
-import { createWorker, deleteWorker, updateWorker } from '@/lib/repo'
+import { createWorker, deleteWorker, setWorkerWage, updateWorker } from '@/lib/repo'
+import { currentWage } from '@/lib/compute/wage'
 import { FOOD_MODES, WORKER_TYPES } from '@/lib/constants'
+import { formatDate, todayISO } from '@/lib/dates'
+import { money } from '@/lib/format'
 import type { FoodMode, WorkerType } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -30,9 +33,9 @@ export function WorkerForm() {
   const navigate = useNavigate()
 
   const [name, setName] = React.useState('')
-  const [code, setCode] = React.useState('')
   const [type, setType] = React.useState<WorkerType>('Helper')
   const [wage, setWage] = React.useState('')
+  const [wageEffective, setWageEffective] = React.useState(todayISO())
   const [phone, setPhone] = React.useState('')
   const [active, setActive] = React.useState(true)
   const [photo, setPhoto] = React.useState<Blob>()
@@ -65,9 +68,10 @@ export function WorkerForm() {
     if (existing && !loaded.current) {
       loaded.current = true
       setName(existing.name)
-      setCode(existing.code)
       setType(existing.type)
-      setWage(String(existing.dailyWage))
+      setWage(String(currentWage(existing)))
+      // A new edit defaults to taking effect today (past work keeps its old rate).
+      setWageEffective(todayISO())
       setPhone(existing.phone ?? '')
       setActive(existing.active)
       setPhoto(existing.photoThumb)
@@ -88,11 +92,10 @@ export function WorkerForm() {
       return
     }
     setSaving(true)
-    const data = {
+    const wageNum = wage ? Number(wage) : 0
+    const common = {
       name: name.trim(),
-      code: code.trim() || undefined,
       type,
-      dailyWage: wage ? Number(wage) : 0,
       phone: phone.trim() || undefined,
       active,
       photoThumb: photo,
@@ -104,11 +107,19 @@ export function WorkerForm() {
       foodPerWeek: perWeek ? Number(perWeek) : undefined,
       maxDaysPerWeek: maxDays ? Number(maxDays) : 10,
     }
-    if (editing) {
-      await updateWorker(id!, data)
+    if (editing && existing) {
+      await updateWorker(id!, common)
+      // Changing the displayed rate appends a new effective-dated entry (§7).
+      if (wageNum !== currentWage(existing)) {
+        await setWorkerWage(id!, wageNum, wageEffective || todayISO())
+      }
       navigate(`/workers/${id}`, { replace: true })
     } else {
-      const newId = await createWorker(data)
+      const newId = await createWorker({
+        ...common,
+        dailyWage: wageNum,
+        effectiveFrom: wageEffective || todayISO(),
+      })
       navigate(`/workers/${newId}`, { replace: true })
     }
   }
@@ -157,29 +168,48 @@ export function WorkerForm() {
             </SelectContent>
           </Select>
         </Field>
-        <Field label="Daily wage" required>
-          {(fid) => (
-            <Input
-              id={fid}
-              type="number"
-              inputMode="decimal"
-              value={wage}
-              onChange={(e) => setWage(e.target.value)}
-              placeholder="₹"
-            />
-          )}
-        </Field>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Code" hint="Auto if blank">
-          {(fid) => <Input id={fid} value={code} onChange={(e) => setCode(e.target.value)} />}
-        </Field>
         <Field label="Phone">
           {(fid) => (
             <Input id={fid} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile" />
           )}
         </Field>
+      </div>
+
+      {/* Daily wage — effective-dated history (§7). */}
+      <div className="space-y-3 rounded-xl border border-border bg-card p-3.5">
+        <p className="text-sm font-semibold">Daily wage</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Amount" required>
+            {(fid) => (
+              <Input
+                id={fid}
+                type="number"
+                inputMode="decimal"
+                value={wage}
+                onChange={(e) => setWage(e.target.value)}
+                placeholder="₹"
+              />
+            )}
+          </Field>
+          <Field label="Effective from" hint="Past work keeps its old rate">
+            {(fid) => (
+              <Input id={fid} type="date" value={wageEffective} onChange={(e) => setWageEffective(e.target.value)} />
+            )}
+          </Field>
+        </div>
+        {editing && existing && existing.wageHistory.length > 0 && (
+          <div className="space-y-1 border-t border-border pt-2">
+            <p className="text-xs font-medium text-muted-foreground">Rate history</p>
+            {[...existing.wageHistory]
+              .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))
+              .map((w) => (
+                <div key={w.effectiveFrom} className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">from {formatDate(w.effectiveFrom)}</span>
+                  <span className="font-medium">{money(w.dailyWage)}/day</span>
+                </div>
+              ))}
+          </div>
+        )}
       </div>
 
       <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5">
@@ -209,12 +239,12 @@ export function WorkerForm() {
 
         {foodMode === 'meal' && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Breakfast (block 1)">
+            <Field label="Breakfast (blocks 1 & 2)">
               {(fid) => (
                 <Input id={fid} type="number" inputMode="decimal" value={breakfast} onChange={(e) => setBreakfast(e.target.value)} />
               )}
             </Field>
-            <Field label="Lunch (block 3)">
+            <Field label="Lunch (blocks 2 & 3)">
               {(fid) => (
                 <Input id={fid} type="number" inputMode="decimal" value={lunch} onChange={(e) => setLunch(e.target.value)} />
               )}

@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CheckCircle2, FileUp, Lock, ShieldCheck, TriangleAlert } from 'lucide-react'
+import { CheckCircle2, CloudDownload, FileUp, Lock, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Field } from '@/components/Field'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { decryptAndSync, type SyncResult } from '@/lib/sync'
+import { driveConfigured, pickFileText } from '@/lib/drive'
 import { cn } from '@/lib/utils'
 
 export function SyncScreen() {
@@ -17,22 +18,34 @@ export function SyncScreen() {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
 
+  async function syncText(text: string) {
+    setBusy(true)
+    setError('')
+    setResult(undefined)
+    try {
+      setResult(await decryptAndSync(text, pass))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function run() {
     if (!file) {
       setError('Choose the transaction app backup file first.')
       return
     }
-    setBusy(true)
+    await syncText(await file.text())
+  }
+
+  async function runDrive() {
     setError('')
-    setResult(undefined)
     try {
-      const text = await file.text()
-      const res = await decryptAndSync(text, pass)
-      setResult(res)
+      const text = await pickFileText()
+      if (text) await syncText(text)
     } catch (e) {
       setError((e as Error).message)
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -43,7 +56,8 @@ export function SyncScreen() {
         <div className="flex gap-2.5 rounded-xl border border-border bg-accent/40 p-3 text-sm text-muted-foreground">
           <ShieldCheck className="size-5 shrink-0 text-primary" />
           <p>
-            Pick your transaction app’s encrypted backup and enter its passphrase. It’s decrypted
+            Pick your transaction app’s backup. If it’s encrypted, enter the passphrase (leave blank
+            for plain JSON). It’s read
             <span className="font-medium text-foreground"> on this device only</span>; just the
             <span className="font-medium text-foreground"> Construction</span> transactions are saved here.
           </p>
@@ -76,7 +90,14 @@ export function SyncScreen() {
           </button>
         </Field>
 
-        <Field label="Passphrase">
+        {driveConfigured() && (
+          <Button type="button" variant="outline" className="w-full" onClick={runDrive} disabled={busy}>
+            <CloudDownload className="size-4" />
+            Pick from Google Drive
+          </Button>
+        )}
+
+        <Field label="Passphrase" hint="Leave blank for an unencrypted (plain JSON) backup">
           {(fid) => (
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -85,7 +106,7 @@ export function SyncScreen() {
                 type="password"
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
-                placeholder="Backup passphrase"
+                placeholder="Backup passphrase (optional)"
                 className="pl-9"
                 autoComplete="off"
               />
@@ -110,7 +131,7 @@ export function SyncScreen() {
               <CheckCircle2 className="size-5" />
               Sync complete
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="grid grid-cols-4 gap-2 text-center">
               <div>
                 <p className="tabular text-2xl font-bold">{result.added}</p>
                 <p className="text-xs text-muted-foreground">new</p>
@@ -120,10 +141,24 @@ export function SyncScreen() {
                 <p className="text-xs text-muted-foreground">re-flagged</p>
               </div>
               <div>
+                <p className="tabular text-2xl font-bold">{result.carried}</p>
+                <p className="text-xs text-muted-foreground">carried</p>
+              </div>
+              <div>
                 <p className="tabular text-2xl font-bold">{result.totalConstruction}</p>
-                <p className="text-xs text-muted-foreground">construction</p>
+                <p className="text-xs text-muted-foreground">total</p>
               </div>
             </div>
+            {result.unmatched.length > 0 && (
+              <p className="rounded-lg bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-300">
+                Auto-mapped new category {result.unmatched.length === 1 ? 'name' : 'names'}:{' '}
+                <span className="font-medium">{result.unmatched.join(', ')}</span>. Fix any in{' '}
+                <Link to="/settings" className="underline">
+                  Settings → Category mapping
+                </Link>
+                .
+              </p>
+            )}
             <Button asChild className="w-full" variant="secondary">
               <Link to="/payments">Go to review queue</Link>
             </Button>

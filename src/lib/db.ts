@@ -1,9 +1,11 @@
 import Dexie, { type Table } from 'dexie'
 import { DEFAULTS, DEFAULT_SHIFT_BLOCKS, SEED_OTHER_EXPENSE_TYPES } from './constants'
+import { toISODate, todayISO } from './dates'
 import { now, uuid } from './ids'
 import type {
   Attendance,
   Building,
+  CategoryMap,
   Mold,
   OtherExpenseType,
   Owner,
@@ -20,10 +22,13 @@ export class CwmDB extends Dexie {
   attendance!: Table<Attendance, string>
   syncedTransactions!: Table<SyncedTransaction, string>
   otherExpenseTypes!: Table<OtherExpenseType, string>
+  categoryMap!: Table<CategoryMap, string>
   settings!: Table<Settings, string>
 
   constructor() {
     super('centering-work-manager')
+
+    // v1 — the original schema (kept so existing installs upgrade cleanly).
     this.version(1).stores({
       buildings: 'id, code, ownerId, status, name, updatedAt',
       molds: 'id, buildingId, order, workStatus, paymentStatus, [buildingId+order]',
@@ -36,6 +41,52 @@ export class CwmDB extends Dexie {
       otherExpenseTypes: 'id, name',
       settings: 'id',
     })
+
+    // v2 — derived building names (drop name/code), effective-dated wages
+    // (dailyWage → wageHistory), no codes on workers/owners, a categoryMap
+    // table, and an importFingerprint index on synced transactions.
+    this.version(2)
+      .stores({
+        buildings: 'id, ownerId, status, updatedAt',
+        molds: 'id, buildingId, order, workStatus, paymentStatus, [buildingId+order]',
+        workers: 'id, active, type, name',
+        owners: 'id, name',
+        attendance:
+          'id, workerId, buildingId, moldId, date, [workerId+date], [buildingId+date], [moldId+date]',
+        syncedTransactions:
+          'id, date, direction, subCategory, assignmentStatus, buildingId, moldId, workerId, importFingerprint',
+        otherExpenseTypes: 'id, name',
+        categoryMap: 'id, sourceName',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('workers')
+          .toCollection()
+          .modify((w: Record<string, unknown>) => {
+            if (!Array.isArray(w.wageHistory)) {
+              const dailyWage = typeof w.dailyWage === 'number' ? (w.dailyWage as number) : 0
+              const created = typeof w.createdAt === 'number' ? (w.createdAt as number) : undefined
+              const effectiveFrom = created ? toISODate(new Date(created)) : todayISO()
+              w.wageHistory = [{ effectiveFrom, dailyWage }]
+            }
+            delete w.dailyWage
+            delete w.code
+          })
+        await tx
+          .table('buildings')
+          .toCollection()
+          .modify((b: Record<string, unknown>) => {
+            delete b.code
+            delete b.name
+          })
+        await tx
+          .table('owners')
+          .toCollection()
+          .modify((o: Record<string, unknown>) => {
+            delete o.code
+          })
+      })
 
     this.on('populate', () => {
       this.settings.add(defaultSettings())
@@ -96,6 +147,7 @@ export async function clearAllTables(): Promise<void> {
       db.attendance,
       db.syncedTransactions,
       db.otherExpenseTypes,
+      db.categoryMap,
       db.settings,
     ],
     async () => {
@@ -107,6 +159,7 @@ export async function clearAllTables(): Promise<void> {
         db.attendance.clear(),
         db.syncedTransactions.clear(),
         db.otherExpenseTypes.clear(),
+        db.categoryMap.clear(),
         db.settings.clear(),
       ])
     },

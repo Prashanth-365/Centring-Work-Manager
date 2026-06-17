@@ -5,6 +5,7 @@ import { BALANCE_SUBCATS } from '../constants'
 import { dateInRange, parseDate, weekDays, weekRange, type WeekStart } from '../dates'
 import type { Attendance, SyncedTransaction, Worker } from '../types'
 import { foodForEntries } from './food'
+import { wageOnDate } from './wage'
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
 
@@ -24,7 +25,8 @@ export interface WeeklyRow {
   worker: Worker
   perDay: number[]
   totalDays: number
-  wagePerDay: number
+  wagePerDay: number // rate effective at the end of this week
+  wageChangedMidWeek: boolean // true if the rate changed during the week
   totalWage: number
   food: number
   total: number
@@ -78,15 +80,20 @@ export function weeklySummary(
       sum(weekEntries.filter((a) => a.date === d).map((a) => a.dayFraction)),
     )
     const totalDays = sum(perDay)
-    const totalWage = totalDays * worker.dailyWage
+    // Wage uses the rate effective on each attendance's own date (§7).
+    const totalWage = sum(weekEntries.map((a) => a.dayFraction * wageOnDate(worker, a.date)))
     const food = foodForEntries(worker, weekEntries, weekStartsOn)
     const total = totalWage + food
+
+    const weekRates = new Set(days.map((d) => wageOnDate(worker, d)))
+    const wagePerDay = wageOnDate(worker, days[days.length - 1])
+    const wageChangedMidWeek = weekRates.size > 1
 
     const allTx = txByWorker.get(worker.id) ?? []
     const paid = sum(allTx.filter((t) => dateInRange(t.date, start, end)).map((t) => t.amount))
     const current = total - paid
 
-    const wageBefore = sum(beforeEntries.map((a) => a.dayFraction)) * worker.dailyWage
+    const wageBefore = sum(beforeEntries.map((a) => a.dayFraction * wageOnDate(worker, a.date)))
     const foodBefore = foodForEntries(worker, beforeEntries, weekStartsOn)
     const paidBefore = sum(allTx.filter((t) => parseDate(t.date) < start).map((t) => t.amount))
     const previousBalance = wageBefore + foodBefore - paidBefore
@@ -96,7 +103,8 @@ export function weeklySummary(
       worker,
       perDay,
       totalDays,
-      wagePerDay: worker.dailyWage,
+      wagePerDay,
+      wageChangedMidWeek,
       totalWage,
       food,
       total,
