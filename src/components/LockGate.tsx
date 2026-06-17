@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Delete, Fingerprint, Lock } from 'lucide-react'
 import { ensureSeed } from '@/lib/db'
 import { startDailyAutoAdvance } from '@/lib/autoAdvance'
+import { setDriveClientId } from '@/lib/drive'
 import { useSettings } from '@/lib/hooks'
 import { verifyPin } from '@/lib/crypto'
 import { verifyBiometric } from '@/lib/biometric'
@@ -119,6 +120,11 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     })
     return () => stop()
   }, [])
+
+  // Keep the Drive client id in sync with Settings so flow B (Sync screen) works too.
+  React.useEffect(() => {
+    setDriveClientId(settings?.googleClientId)
+  }, [settings?.googleClientId])
 
   const lock = settings?.appLock
   const enabled = !!lock?.enabled

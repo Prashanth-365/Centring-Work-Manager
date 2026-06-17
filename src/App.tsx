@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/AppShell'
 import { BackButtonHandler } from '@/components/BackButtonHandler'
 import { LockGate } from '@/components/LockGate'
+import { Toaster } from '@/components/ui/toaster'
 import { Dashboard } from '@/screens/Dashboard'
 import { BuildingsList } from '@/screens/buildings/BuildingsList'
 import { BuildingDetail } from '@/screens/buildings/BuildingDetail'
@@ -59,6 +60,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <Toaster />
     </LockGate>
   )
 }

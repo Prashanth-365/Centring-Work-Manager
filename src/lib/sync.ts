@@ -1,12 +1,17 @@
 // Reading the transaction app's backup and upserting its `Construction`
-// transactions into syncedTransactions — keyed on UUID `id`, NEVER slNo (slNo
+// transactions into syncedTransactions — keyed on `id`, NEVER slNo (slNo
 // re-sequences on backdated inserts).
 //
 // Two source shapes are handled:
-//   1. The documented shape (§8): { data: { categories:[{id,name,parentID}],
+//   1. The documented shape (§8) — e.g. FinSight's `dumpAll()` export:
+//      { data: { categories:[{id, name, parentId}],
 //      transactions:[{id, dateTime, categoryId, subCategoryId, amount, txnType,
-//      importFingerprint, …}] } } — the category hierarchy maps subCategoryId →
-//      name → our type via the categoryMap (+ a normalized auto-match).
+//      importFingerprint, …}] } }. Transactions carry only NUMERIC category ids;
+//      the string "Construction" lives solely in `categories`. We therefore JOIN
+//      by id: find the "Construction" category by name, collect its id + every
+//      child id, and keep a txn whose `categoryId` OR `subCategoryId` is in that
+//      set. The leaf sub-category name → our type via the categoryMap (+ a
+//      normalized auto-match).
 //   2. A heuristic fallback for older/unknown exports (string category fields).
 import { decryptFlexible } from './crypto'
 import {
@@ -91,8 +96,24 @@ function parentIdOf(c: AnyObj): unknown {
   return c.parentID ?? c.parentId ?? c.parent ?? null
 }
 
-/** Parse the documented {categories, transactions} shape. Returns null if it
- * doesn't match (so the caller can fall back to the heuristic). */
+/** Names of the top-level categories (parent == null) — for diagnostics. */
+function topLevelCategoryNames(cats: AnyObj[]): string[] {
+  return cats
+    .filter((c) => parentIdOf(c) == null)
+    .map((c) => String(c.name ?? '').trim())
+    .filter(Boolean)
+}
+
+const CAT_ID_KEYS = ['categoryId', 'categoryID', 'catId', 'category']
+const SUBCAT_ID_KEYS = ['subCategoryId', 'subCategoryID', 'subcategoryId', 'subCatId']
+
+/** Parse the documented {categories, transactions} shape — e.g. FinSight's
+ * `dumpAll()` export. Transactions carry only NUMERIC category ids; the string
+ * "Construction" lives solely in `categories`, so we JOIN by id: collect the
+ * Construction category's id + every child id, then keep a txn whose `categoryId`
+ * OR `subCategoryId` is in that set. Returns null if this isn't the documented
+ * shape (so the caller can fall back to the heuristic). THROWS a descriptive
+ * error if it IS the documented shape but has no "Construction" category. */
 function extractDocumented(root: unknown): RawTxn[] | null {
   const r = (root ?? {}) as AnyObj
   const data = ((r.data as AnyObj) ?? r) as AnyObj
@@ -101,29 +122,54 @@ function extractDocumented(root: unknown): RawTxn[] | null {
   if (!Array.isArray(categories) || !Array.isArray(transactions)) return null
 
   const cats = categories as AnyObj[]
+  // "Construction" is a user-created category — match by name, never a hard-coded id.
   const construction =
     cats.find(
       (c) => normalizeCategoryName(String(c.name ?? '')) === 'construction' && parentIdOf(c) == null,
     ) ?? cats.find((c) => normalizeCategoryName(String(c.name ?? '')) === 'construction')
-  if (!construction) return null
+  if (!construction) {
+    // The file IS a finance export, but there's no Construction category — say
+    // what we saw so the user can fix it (never fail silently).
+    const names = topLevelCategoryNames(cats)
+    throw new Error(
+      names.length
+        ? `No "Construction" category was found in this export. Top-level categories seen: ${names.join(
+            ', ',
+          )}. Add or rename one to "Construction" in the finance app, then export again.`
+        : 'No "Construction" category was found — this export has no top-level categories.',
+    )
+  }
   const constructionId = String(construction.id ?? '')
   if (!constructionId) return null
 
-  // subCategoryId → name
-  const subName = new Map<string, string>()
+  // id → category name, and the set of Construction's own id + all its child ids.
+  const nameById = new Map<string, string>()
+  const constructionIds = new Set<string>([constructionId])
   for (const c of cats) {
-    if (String(parentIdOf(c) ?? '') === constructionId) subName.set(String(c.id), String(c.name ?? ''))
+    if (c.id != null) nameById.set(String(c.id), String(c.name ?? ''))
+    if (String(parentIdOf(c) ?? '') === constructionId) constructionIds.add(String(c.id))
   }
 
   const out: RawTxn[] = []
   for (const t of transactions as AnyObj[]) {
-    const catId = String(t.categoryId ?? t.category ?? '')
-    if (catId !== constructionId) continue
+    const catRaw = pick(t, CAT_ID_KEYS)
+    const subRaw = pick(t, SUBCAT_ID_KEYS)
+    const catId = catRaw != null ? String(catRaw) : ''
+    const subId = subRaw != null ? String(subRaw) : ''
+    // Belongs to Construction if either id resolves into the Construction subtree.
+    if (!constructionIds.has(catId) && !constructionIds.has(subId)) continue
+
     const id = strOrUndef(pick(t, ID_KEYS))
-    if (!id) continue // require a stable UUID; never slNo
-    const amount = Math.abs(Number(t.amount ?? 0))
+    if (!id) continue // require a stable id; never slNo
+    const amount = Math.abs(Number(t.amount ?? 0)) // amount is always positive; direction is in txnType
     if (Number.isNaN(amount)) continue
-    const rawName = subName.get(String(t.subCategoryId ?? '')) ?? String(t.subCategory ?? '')
+
+    // The classifiable name is the leaf sub-category: prefer subCategoryId's name,
+    // else categoryId's name when the txn is filed on a Construction *child*.
+    const rawName =
+      (subId ? nameById.get(subId) : undefined) ??
+      (catId && catId !== constructionId ? nameById.get(catId) : undefined) ??
+      String(pick(t, SUB_KEYS) ?? '')
     const type = autoMatchSubCategory(rawName)
     const dt = pick(t, DATE_KEYS)
     out.push({
@@ -188,8 +234,8 @@ function extractHeuristic(root: unknown): RawTxn[] {
   const out: RawTxn[] = []
   for (const t of arr) {
     if (!t || typeof t !== 'object') continue
-    const idVal = pick(t, ID_KEYS)
-    if (typeof idVal !== 'string' || !idVal) continue
+    const idVal = strOrUndef(pick(t, ID_KEYS)) // accept string OR numeric ids
+    if (!idVal) continue
     const category = String(pick(t, CAT_KEYS) ?? '')
     if (normalizeCategoryName(category) !== 'construction') continue
     const amountRaw = Number(pick(t, AMOUNT_KEYS) ?? 0)
@@ -212,7 +258,9 @@ function extractHeuristic(root: unknown): RawTxn[] {
   return out
 }
 
-/** Parse decrypted plaintext → the Construction transactions only. Pure. */
+/** Parse decrypted plaintext → the Construction transactions only. Pure.
+ * Throws descriptive errors (never silent) when the file shape is unexpected or
+ * the documented shape lacks a "Construction" category. */
 export function extractConstruction(plaintext: string): RawTxn[] {
   let root: unknown
   try {
@@ -220,7 +268,41 @@ export function extractConstruction(plaintext: string): RawTxn[] {
   } catch {
     throw new Error('Decrypted file is not valid JSON.')
   }
-  return extractDocumented(root) ?? extractHeuristic(root)
+
+  // Documented shape throws on "no Construction"; otherwise returns the rows or
+  // null (not the documented shape → try the heuristic).
+  const documented = extractDocumented(root)
+  if (documented) return documented
+
+  const heuristic = extractHeuristic(root)
+  if (heuristic.length > 0) return heuristic
+
+  // Nothing matched — tell the user what the file actually looked like.
+  throw new Error(unexpectedShapeMessage(root))
+}
+
+/** Build a helpful message describing the unrecognised file shape. */
+function unexpectedShapeMessage(root: unknown): string {
+  if (!root || typeof root !== 'object') {
+    return 'Unexpected file shape — expected a finance export with { data: { categories, transactions } }.'
+  }
+  const r = root as AnyObj
+  const data = (r.data as AnyObj | undefined) ?? undefined
+  const topKeys = Object.keys(r)
+  if (data && typeof data === 'object') {
+    const dataKeys = Object.keys(data)
+    const hasCats = Array.isArray(data.categories)
+    const hasTxns = Array.isArray(data.transactions)
+    if (!hasCats || !hasTxns) {
+      return `Could not read transactions — "data" is missing ${
+        !hasCats && !hasTxns ? 'categories and transactions' : !hasCats ? 'categories' : 'transactions'
+      }. Keys under data: ${dataKeys.join(', ') || '(none)'}.`
+    }
+    return 'Found categories and transactions but no Construction transactions to import.'
+  }
+  return `Unexpected file shape — no "data" object. Top-level keys: ${
+    topKeys.join(', ') || '(none)'
+  }. Expected a finance export with { data: { categories, transactions } }.`
 }
 
 export interface SyncResult {

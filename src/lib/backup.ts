@@ -109,3 +109,95 @@ export async function restoreFromText(fileText: string, passphrase: string): Pro
     }
   })
 }
+
+// ---- plain-JSON backup ( { version, exportedAt, data:{...tables} } ) -------
+// Unencrypted, portable shape — used by the Settings → Data UI and Google Drive.
+// Mirrors the finance app's export layout (every table nested under `data`).
+
+/** Current backup schema version — matches the Dexie schema (v2). */
+export const BACKUP_VERSION = 2
+
+export interface DataBackup {
+  version: number
+  exportedAt: number // epoch ms
+  data: Record<string, Record<string, unknown>[]>
+}
+
+/** Read the whole DB into the plain-JSON backup shape (Blobs → markers). */
+export async function buildDataBackup(): Promise<DataBackup> {
+  const data: Record<string, Record<string, unknown>[]> = {}
+  for (const name of TABLES) {
+    const rows = (await db.table(name).toArray()) as Record<string, unknown>[]
+    data[name] = await Promise.all(rows.map(serializeRecord))
+  }
+  return { version: BACKUP_VERSION, exportedAt: Date.now(), data }
+}
+
+/** Serialize the DB to a pretty JSON string for download / upload. */
+export async function exportDataBackup(): Promise<string> {
+  return JSON.stringify(await buildDataBackup(), null, 2)
+}
+
+/** Parse + validate a plain-JSON backup. Pure. Throws a descriptive error
+ * (never silent) that says what was actually seen when the shape is wrong. */
+export function validateDataBackup(fileText: string): DataBackup {
+  let obj: unknown
+  try {
+    obj = JSON.parse(fileText)
+  } catch {
+    throw new Error('Backup file is not valid JSON.')
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new Error('Backup file is empty or not a JSON object.')
+  }
+  const o = obj as Record<string, unknown>
+  // An encrypted (cwm-backup-v1) envelope is a different format — guide the user.
+  if (o.ciphertext != null && o.data == null) {
+    throw new Error('This is an encrypted backup — use the encrypted restore with its passphrase.')
+  }
+  if (typeof o.version !== 'number') {
+    throw new Error('Backup is missing a numeric "version" field — it may not be a backup file.')
+  }
+  if (o.version > BACKUP_VERSION) {
+    throw new Error(
+      `Backup version ${o.version} is newer than this app supports (${BACKUP_VERSION}). Update the app first.`,
+    )
+  }
+  if (!o.data || typeof o.data !== 'object' || Array.isArray(o.data)) {
+    throw new Error('Backup is missing its "data" object of tables.')
+  }
+  const data = o.data as Record<string, unknown>
+  const hasAnyKnownTable = TABLES.some((t) => Array.isArray(data[t]))
+  if (!hasAnyKnownTable) {
+    const seen = Object.keys(data)
+    throw new Error(
+      `Backup "data" has no known tables. Expected e.g. ${TABLES.slice(0, 3).join(', ')}…; saw: ${
+        seen.length ? seen.join(', ') : '(none)'
+      }.`,
+    )
+  }
+  return {
+    version: o.version,
+    exportedAt: Number(o.exportedAt) || 0,
+    data: data as DataBackup['data'],
+  }
+}
+
+/** Restore a plain-JSON backup: validate, then replace every table. Returns a
+ * summary for the success toast. Throws descriptive errors (never silent). */
+export async function restoreDataBackup(fileText: string): Promise<{ tables: number; rows: number }> {
+  const backup = validateDataBackup(fileText)
+  let tables = 0
+  let rows = 0
+  await clearAllTables()
+  await db.transaction('rw', db.tables, async () => {
+    for (const name of TABLES) {
+      const arr = backup.data[name]
+      if (!Array.isArray(arr)) continue
+      tables += 1
+      rows += arr.length
+      await db.table(name).bulkAdd(arr.map(deserializeRecord))
+    }
+  })
+  return { tables, rows }
+}

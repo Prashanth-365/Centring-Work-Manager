@@ -3,8 +3,14 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import {
   Check,
   Clock,
+  CloudDownload,
+  CloudUpload,
+  Database,
   DatabaseBackup,
   DownloadCloud,
+  FileUp,
+  HardDriveDownload,
+  Link2,
   Lock,
   Plus,
   Tags,
@@ -30,10 +36,22 @@ import { updateSettings, createOtherExpenseType } from '@/lib/repo'
 import { useOtherExpenseTypes } from '@/lib/hooks'
 import { derivePinHash } from '@/lib/crypto'
 import { enrollBiometric, isBiometricAvailable } from '@/lib/biometric'
-import { buildBackupEnvelope, downloadBackup, restoreFromText } from '@/lib/backup'
-import { driveConfigured, pickFileText, uploadBackupToDrive } from '@/lib/drive'
+import { exportDataBackup, restoreDataBackup } from '@/lib/backup'
+import { fileTimestamp, saveTextFile } from '@/lib/files'
+import {
+  backupToDrive,
+  connectDrive,
+  disconnectDrive,
+  driveConfigured,
+  isDriveConnected,
+  pickFileText,
+  restoreFromDrive,
+  setDriveClientId,
+} from '@/lib/drive'
+import { decryptAndSync } from '@/lib/sync'
+import { toast } from '@/lib/toast'
 import { CategoryMapping } from '@/screens/settings/CategoryMapping'
-import type { AppLockConfig, ShiftBlock } from '@/lib/types'
+import type { AppLockConfig, Settings as SettingsType, ShiftBlock } from '@/lib/types'
 
 export function Settings() {
   const settingsRow = useLiveQuery(() => db.settings.get('app'), [])
@@ -202,7 +220,7 @@ export function Settings() {
         </Section>
 
         <AppLockSection lock={settingsRow.appLock} />
-        <BackupSection />
+        <DataSection settings={settingsRow} />
 
         <p className="pt-2 text-center text-xs text-muted-foreground">
           Centering Work Manager · all data stays on this device
@@ -347,140 +365,231 @@ function AppLockSection({ lock }: { lock: AppLockConfig }) {
   )
 }
 
-type BackupMode = 'backup' | 'restore' | 'drive-backup' | 'drive-restore' | null
+function DataSection({ settings }: { settings: SettingsType }) {
+  const restoreRef = React.useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = React.useState('')
+  const [confirmFile, setConfirmFile] = React.useState<File>()
+  const [clientId, setClientId] = React.useState(settings.googleClientId ?? '')
+  const [connected, setConnected] = React.useState(isDriveConnected())
+  const driveOn = driveConfigured()
 
-function BackupSection() {
-  const [mode, setMode] = React.useState<BackupMode>(null)
-  const [pass, setPass] = React.useState('')
-  const [file, setFile] = React.useState<File>()
-  const [busy, setBusy] = React.useState(false)
-  const [msg, setMsg] = React.useState('')
-  const [err, setErr] = React.useState('')
-  const fileRef = React.useRef<HTMLInputElement>(null)
-
-  const isBackup = mode === 'backup' || mode === 'drive-backup'
-  const isRestore = mode === 'restore' || mode === 'drive-restore'
-
-  function reset() {
-    setPass('')
-    setFile(undefined)
-    setErr('')
-    setMsg('')
-  }
-
-  async function run() {
-    setBusy(true)
-    setErr('')
-    setMsg('')
+  async function withBusy(key: string, fn: () => Promise<void>) {
+    setBusy(key)
     try {
-      if (isBackup && pass.length < 4) throw new Error('Use a passphrase of at least 4 characters.')
-      if (mode === 'backup') {
-        await downloadBackup(pass)
-        setMsg('Backup downloaded.')
-        setTimeout(() => setMode(null), 1200)
-        reset()
-      } else if (mode === 'drive-backup') {
-        const env = await buildBackupEnvelope(pass)
-        await uploadBackupToDrive(`centering-backup-${env.createdAt.slice(0, 10)}.json`, JSON.stringify(env))
-        setMsg('Backed up to Google Drive.')
-        setTimeout(() => setMode(null), 1200)
-        reset()
-      } else if (mode === 'restore') {
-        if (!file) throw new Error('Choose a backup file.')
-        await restoreFromText(await file.text(), pass)
-        setMsg('Restored. Reloading…')
-        setTimeout(() => window.location.reload(), 900)
-      } else if (mode === 'drive-restore') {
-        const text = await pickFileText()
-        if (!text) {
-          setBusy(false)
-          return
-        }
-        await restoreFromText(text, pass)
-        setMsg('Restored. Reloading…')
-        setTimeout(() => window.location.reload(), 900)
-      }
+      await fn()
     } catch (e) {
-      setErr((e as Error).message)
+      // Never fail silently — always surface what went wrong.
+      toast.error((e as Error).message || 'Something went wrong.')
     } finally {
-      setBusy(false)
+      setBusy('')
     }
   }
 
+  async function markDriveSync() {
+    await updateSettings({ lastDriveSyncAt: Date.now() })
+  }
+
+  // --- Local backup / restore (plain JSON) ---
+  async function localBackup() {
+    await withBusy('local-backup', async () => {
+      const json = await exportDataBackup()
+      const res = await saveTextFile(`backup-${fileTimestamp()}.json`, json)
+      toast.success(res.native ? `Saved to ${res.location}` : 'Backup downloaded.')
+    })
+  }
+
+  async function doRestore(file: File) {
+    await withBusy('local-restore', async () => {
+      const { tables, rows } = await restoreDataBackup(await file.text())
+      toast.success(`Restored ${rows} records across ${tables} tables. Reloading…`)
+      setTimeout(() => window.location.reload(), 1100)
+    })
+  }
+
+  // --- Google Drive ---
+  async function saveClientId() {
+    const trimmed = clientId.trim()
+    await updateSettings({ googleClientId: trimmed })
+    setDriveClientId(trimmed)
+    toast.success(trimmed ? 'Google client id saved.' : 'Google client id cleared.')
+  }
+
+  async function connect() {
+    await withBusy('connect', async () => {
+      await connectDrive()
+      setConnected(true)
+      toast.success('Connected to Google Drive.')
+    })
+  }
+
+  function disconnect() {
+    disconnectDrive()
+    setConnected(false)
+    toast.info('Disconnected from Google Drive.')
+  }
+
+  async function driveBackup() {
+    await withBusy('drive-backup', async () => {
+      const json = await exportDataBackup()
+      await backupToDrive(json)
+      setConnected(true)
+      await markDriveSync()
+      toast.success('Backed up to Google Drive.')
+    })
+  }
+
+  async function driveRestore() {
+    await withBusy('drive-restore', async () => {
+      const text = await restoreFromDrive()
+      const { tables, rows } = await restoreDataBackup(text)
+      setConnected(true)
+      await markDriveSync()
+      toast.success(`Restored ${rows} records across ${tables} tables. Reloading…`)
+      setTimeout(() => window.location.reload(), 1100)
+    })
+  }
+
+  async function importFinanceFromDrive() {
+    await withBusy('drive-import', async () => {
+      const text = await pickFileText() // flow B — Picker grants access to that file
+      if (!text) return // user cancelled
+      setConnected(true)
+      const result = await decryptAndSync(text, '')
+      toast.success(
+        `Imported ${result.totalConstruction} Construction transactions (${result.added} new).`,
+      )
+    })
+  }
+
+  const lastSync = settings.lastDriveSyncAt
+    ? new Date(settings.lastDriveSyncAt).toLocaleString()
+    : null
+
   return (
-    <Section icon={DatabaseBackup} title="Backup & restore" hint="Encrypted with your passphrase (AES-256-GCM)">
+    <Section icon={Database} title="Data" hint="Back up and restore everything on this device">
+      {/* Local backup / restore */}
       <div className="grid grid-cols-2 gap-2.5">
-        <Button variant="outline" onClick={() => { reset(); setMode('backup') }}>
+        <Button variant="outline" onClick={localBackup} disabled={busy === 'local-backup'}>
           <DownloadCloud className="size-4" />
-          Backup
+          {busy === 'local-backup' ? 'Saving…' : 'Back up'}
         </Button>
-        <Button variant="outline" onClick={() => { reset(); setMode('restore') }}>
+        <Button
+          variant="outline"
+          onClick={() => restoreRef.current?.click()}
+          disabled={busy === 'local-restore'}
+        >
           <UploadCloud className="size-4" />
-          Restore
+          {busy === 'local-restore' ? 'Restoring…' : 'Restore'}
         </Button>
+        <input
+          ref={restoreRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) setConfirmFile(f)
+            e.target.value = '' // allow re-picking the same file
+          }}
+        />
       </div>
 
-      {driveConfigured() && (
-        <div className="grid grid-cols-2 gap-2.5">
-          <Button variant="outline" onClick={() => { reset(); setMode('drive-backup') }}>
-            <DownloadCloud className="size-4" />
-            To Drive
-          </Button>
-          <Button variant="outline" onClick={() => { reset(); setMode('drive-restore') }}>
-            <UploadCloud className="size-4" />
-            From Drive
-          </Button>
+      {/* Google Drive */}
+      <div className="space-y-3 rounded-lg border border-border bg-accent/30 p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+            <DatabaseBackup className="size-4 text-muted-foreground" />
+            Google Drive
+          </h3>
+          <span
+            className={
+              'text-xs font-medium ' + (connected ? 'text-success' : 'text-muted-foreground')
+            }
+          >
+            {connected ? 'Connected' : driveOn ? 'Not connected' : 'Not set up'}
+          </span>
         </div>
-      )}
 
-      <Dialog open={mode !== null} onOpenChange={(o) => !o && setMode(null)}>
+        <Field label="OAuth Web client id" hint="From your Google Cloud project (or set VITE_GOOGLE_CLIENT_ID)">
+          {(id) => (
+            <div className="flex gap-2">
+              <Input
+                id={id}
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="xxxx.apps.googleusercontent.com"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <Button variant="secondary" onClick={saveClientId}>
+                Save
+              </Button>
+            </div>
+          )}
+        </Field>
+
+        {driveOn ? (
+          <>
+            <div className="grid grid-cols-2 gap-2.5">
+              {connected ? (
+                <Button variant="outline" onClick={disconnect}>
+                  <Link2 className="size-4" />
+                  Disconnect
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={connect} disabled={busy === 'connect'}>
+                  <Link2 className="size-4" />
+                  {busy === 'connect' ? 'Connecting…' : 'Connect'}
+                </Button>
+              )}
+              <Button variant="outline" onClick={importFinanceFromDrive} disabled={busy === 'drive-import'}>
+                <FileUp className="size-4" />
+                {busy === 'drive-import' ? 'Opening…' : 'Import finance'}
+              </Button>
+              <Button variant="outline" onClick={driveBackup} disabled={busy === 'drive-backup'}>
+                <CloudUpload className="size-4" />
+                {busy === 'drive-backup' ? 'Backing up…' : 'Back up to Drive'}
+              </Button>
+              <Button variant="outline" onClick={driveRestore} disabled={busy === 'drive-restore'}>
+                <CloudDownload className="size-4" />
+                {busy === 'drive-restore' ? 'Restoring…' : 'Restore from Drive'}
+              </Button>
+            </div>
+            {lastSync && (
+              <p className="text-xs text-muted-foreground">Last Drive sync: {lastSync}</p>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Add an OAuth client id above to enable Google Drive backup, restore, and finance import.
+          </p>
+        )}
+      </div>
+
+      {/* Restore confirmation — replacing all local data is destructive. */}
+      <Dialog open={!!confirmFile} onOpenChange={(o) => !o && setConfirmFile(undefined)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isBackup ? 'Encrypted backup' : 'Restore from backup'}</DialogTitle>
+            <DialogTitle>Restore from backup?</DialogTitle>
             <DialogDescription>
-              {isBackup
-                ? 'Choose a passphrase to encrypt your data. Keep it safe — it cannot be recovered.'
-                : 'Restoring replaces all current data in this app.'}
+              This replaces ALL current data in this app with the contents of
+              {confirmFile ? ` “${confirmFile.name}”` : ' the chosen file'}. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
-
-          {mode === 'restore' && (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0])}
-              />
-              <Button variant="outline" className="w-full justify-start" onClick={() => fileRef.current?.click()}>
-                <UploadCloud className="size-4" />
-                <span className="truncate">{file ? file.name : 'Choose backup file'}</span>
-              </Button>
-            </>
-          )}
-          {mode === 'drive-restore' && (
-            <p className="text-xs text-muted-foreground">
-              You’ll pick the backup file from Google Drive after tapping Restore.
-            </p>
-          )}
-
-          <Input
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="Passphrase"
-            autoComplete="off"
-          />
-          {err && <p className="text-xs font-medium text-destructive">{err}</p>}
-          {msg && <p className="text-xs font-medium text-success">{msg}</p>}
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setMode(null)}>
+            <Button variant="outline" onClick={() => setConfirmFile(undefined)}>
               Cancel
             </Button>
-            <Button onClick={run} disabled={busy} variant={isRestore ? 'destructive' : 'default'}>
-              {busy ? 'Working…' : mode === 'backup' ? 'Download' : mode === 'drive-backup' ? 'Upload' : 'Restore'}
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const f = confirmFile
+                setConfirmFile(undefined)
+                if (f) void doRestore(f)
+              }}
+            >
+              <HardDriveDownload className="size-4" />
+              Replace &amp; restore
             </Button>
           </DialogFooter>
         </DialogContent>

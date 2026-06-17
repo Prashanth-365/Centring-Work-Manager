@@ -35,15 +35,17 @@ src/lib/
   db.ts          Dexie schema (v2) + migration + seed (settings, otherExpenseTypes)
   types.ts       domain types
   crypto.ts      AES-256-GCM / PBKDF2-SHA256 (200k) + decryptFlexible()  ← txn-app interop point
-  sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint)
-  backup.ts      this app's own encrypted backup / restore (cwm-backup-v1)
+  sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint); throws descriptive diagnostics (names the categories/keys it saw) when "Construction" is missing or the shape is unexpected
+  backup.ts      this app's own backup / restore — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup, used by Settings → Data + Drive) AND the legacy encrypted envelope (cwm-backup-v1)
+  files.ts       platform-aware saveTextFile() — web Blob download / Android @capacitor/filesystem write to External `finsite-construction/`
+  toast.ts       framework-agnostic toast store (toast.success/error/info + useToasts) so non-React code (drive.ts) can notify too
   repo.ts        create/update helpers, setWorkerWage, attendance block-clash guard, categoryMap CRUD
   hooks.ts       Dexie useLiveQuery hooks
   select.ts      shared selectors (byId, groupBy, buildingName, computeBuilding, currentMold)
   autoAdvance.ts status↔date runtime: runAutoAdvance() + startDailyAutoAdvance() (load/midnight/foreground)
   native.ts      Capacitor wrappers (isNative, hardware back button, app-state)
   biometric.ts   WebAuthn (web) / Capacitor biometric (native) unlock
-  drive.ts       Google Drive (Picker + REST) — DORMANT until VITE_GOOGLE_CLIENT_ID is set
+  drive.ts       Google Drive — GIS token client + REST backup/restore (backupToDrive/restoreFromDrive) + Picker import; client id from settings.googleClientId (set in Settings → Data) OR VITE_GOOGLE_CLIENT_ID; setDriveClientId() syncs it at runtime
   env.ts         defensive VITE_* access (Google client id / redirect)
   compute/       shifts.ts · food.ts · wage.ts · status.ts · balance.ts · profit.ts · weekly.ts (+ *.test.ts)
 src/components/  UI kit + shell (AppShell, BottomNav, BackButtonHandler, LockGate, PageHeader, FormScaffold, …)
@@ -183,10 +185,19 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 - **Hardware back button** (`native.ts` + `components/BackButtonHandler.tsx`): on Android, Back pops
   router history and exits only when already on a root tab (`/`, `/buildings`, `/workers`, `/payments`,
   `/more`).
-- **Google Drive** (`drive.ts`): **built but dormant** until `VITE_GOOGLE_CLIENT_ID` /
-  `VITE_OAUTH_REDIRECT_URL` are set (`isDriveConfigured`). When configured: Google Picker selects the
-  txn backup (Sync screen) and the app's own backups upload/restore via the Drive REST API (Settings).
-  The offline file picker always works regardless.
+- **Google Drive** (`drive.ts`): enabled once a client id exists — set **per-device** in **Settings →
+  Data** (`settings.googleClientId`, applied at runtime via `setDriveClientId()`, also synced at boot in
+  `LockGate`) **or** at build time via `VITE_GOOGLE_CLIENT_ID` (`driveConfigured()`). Auth uses the **GIS
+  token client**. When configured: **Connect** authorises; the app's own plain-JSON backups
+  upload/restore via the Drive REST API (`backupToDrive()` / `restoreFromDrive()`, newest-first), and the
+  **Google Picker** imports the txn backup for sync (Settings → Data **Import finance**, and the Sync
+  screen). `lastDriveSyncAt` records the last Drive backup/restore. The offline file picker always works
+  regardless. All actions report success/failure through **toasts** — never silently.
+- **Data backup/restore** (`backup.ts` + `files.ts`): **Settings → Data** exports every Dexie table as a
+  plain-JSON `{ version, exportedAt, data }` file — web downloads a Blob, Android writes via
+  `@capacitor/filesystem` to External `finsite-construction/` (`saveTextFile()`). Restore validates the
+  shape (`validateDataBackup()` — descriptive errors, detects an encrypted envelope), then **replaces all
+  local data** behind a destructive-confirm dialog.
 
 ## Deployment
 
@@ -198,9 +209,10 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   permission) → `npx cap sync android` (pulls in `@capacitor/app` + the biometric plugin) →
   `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags attach to a Release.
   `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager", webDir `dist`.
-- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) enable Drive. `VITE_*` ships in the
-  client bundle (Vercel "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine
-  without them (offline path unaffected).
+- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) provide a build-time **default** Drive
+  client id; a per-device id set in **Settings → Data** overrides it. `VITE_*` ships in the client bundle
+  (Vercel "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine without them
+  (offline + per-device-Drive paths unaffected).
 
 ## Why (deliberate decisions — don't undo)
 
@@ -223,8 +235,9 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 
 ## Known limitations & roadmap
 
-- **Google Drive is built but unverified end-to-end** — it needs a real `VITE_GOOGLE_CLIENT_ID` + OAuth
-  consent (and an API key may improve the Picker). The OAuth flow couldn't be exercised in CI/headless.
+- **Google Drive is built but unverified end-to-end** — it needs a real Google client id (per-device in
+  **Settings → Data**, or `VITE_GOOGLE_CLIENT_ID`) + OAuth consent (and an API key may improve the
+  Picker). The GIS/OAuth flow couldn't be exercised in CI/headless.
 - **Native biometric is unverified on-device** — the web WebAuthn path is testable; the APK path uses a
   Capacitor plugin that needs a real device/build to confirm.
 - `decryptFlexible()` is heuristic until validated against a **real encrypted** txn export.
