@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(npx esbuild *)",
+      "Bash(node scratch/crypto.test.mjs)",
+      "Bash(node scratch/compute.test.mjs)",
+      "Bash(npx tsc *)",
+      "Bash(node -e \"console.log\\('typescript', require\\('./node_modules/typescript/package.json'\\).version\\)\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(taskkill /PID 8520 /F)",
+      "PowerShell(Stop-Process -Id 8520 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue)",
+      "PowerShell(\"freed\")",
+      "Bash(npx cap *)",
+      "Bash(bash scripts/patch-android.sh)"
+    ]
+  }
+}
