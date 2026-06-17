@@ -71,7 +71,11 @@ export function computeBuilding(
   const labour = buildingLabour(buildingId, attendance, workersById)
   const receivable = buildingReceivable(molds, txns)
   const unpaidDoneAmount = molds
-    .filter((m) => m.workStatus === 'Done/Removed' && m.paymentStatus !== 'Paid')
+    .filter(
+      (m) =>
+        (m.workStatus === 'Completed' || m.workStatus === 'Material Removed') &&
+        m.paymentStatus !== 'Paid',
+    )
     .reduce((s, m) => s + moldOutstanding(m, txns), 0)
   return { revenue, labour, margin: revenue - labour, receivable, current: currentMold(molds), unpaidDoneAmount }
 }

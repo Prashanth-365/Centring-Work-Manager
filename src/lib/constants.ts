@@ -16,7 +16,12 @@ export const BUILDING_STATUSES: BuildingStatus[] = [
   'Closed',
 ]
 
-export const MOLD_WORK_STATUSES: MoldWorkStatus[] = ['Not Started', 'In Progress', 'Done/Removed']
+export const MOLD_WORK_STATUSES: MoldWorkStatus[] = [
+  'Not Started',
+  'In Progress',
+  'Completed',
+  'Material Removed',
+]
 export const MOLD_PAYMENT_STATUSES: MoldPaymentStatus[] = [
   'Not Billed',
   'Billed',

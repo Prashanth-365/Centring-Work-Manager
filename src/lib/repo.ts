@@ -2,6 +2,7 @@ import { db } from './db'
 import { now, uuid } from './ids'
 import { todayISO } from './dates'
 import { withWage } from './compute/wage'
+import { runAutoAdvance } from './autoAdvance'
 import type {
   Attendance,
   Building,
@@ -68,11 +69,13 @@ export async function createMold(
     createdAt: ts,
     updatedAt: ts,
   } as Mold)
+  await runAutoAdvance() // roll up building status + derived dates from molds
   return id
 }
 
 export async function updateMold(id: string, patch: Partial<Mold>): Promise<void> {
   await db.molds.update(id, { ...patch, updatedAt: now() })
+  await runAutoAdvance() // roll up building status + derived dates from molds
 }
 
 export async function deleteMold(id: string): Promise<void> {
@@ -80,6 +83,7 @@ export async function deleteMold(id: string): Promise<void> {
     await db.attendance.where('moldId').equals(id).modify({ moldId: undefined })
     await db.molds.delete(id)
   })
+  await runAutoAdvance() // roll up building status + derived dates from molds
 }
 
 // --- Workers ---------------------------------------------------------------

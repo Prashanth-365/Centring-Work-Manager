@@ -11,7 +11,7 @@ export type BuildingStatus =
   | 'Completed' // work done
   | 'Closed' // work done AND fully paid
 
-export type MoldWorkStatus = 'Not Started' | 'In Progress' | 'Done/Removed'
+export type MoldWorkStatus = 'Not Started' | 'In Progress' | 'Completed' | 'Material Removed'
 export type MoldPaymentStatus = 'Not Billed' | 'Billed' | 'Partly Paid' | 'Paid'
 
 export type WorkerType = 'Helper' | 'Carpenter' | 'Outsider'
@@ -40,7 +40,10 @@ export interface Building {
   id: string
   ownerId?: string
   location?: string
+  /** DERIVED from molds (read-only) — min mold startDate. Recomputed by autoAdvance. */
   startDate?: string
+  /** DERIVED from molds (read-only) — max mold removedDate when all molds are
+   * Material Removed, or today when the building is manually Completed. */
   endDate?: string
   ratePerSqft?: number
   status: BuildingStatus
@@ -56,8 +59,12 @@ export interface Mold {
   buildingId: string
   floorName: string
   order: number
+  /** Work began (centering erected). Drives Not Started → In Progress. */
   startDate?: string
-  endDate?: string
+  /** Slab cast/poured (centering still in place). Drives In Progress → Completed. */
+  completedDate?: string
+  /** Centering de-shuttered — work fully finished. Drives Completed → Material Removed. */
+  removedDate?: string
   sqft?: number
   billAmount?: number
   billPdfLink?: string

@@ -88,6 +88,42 @@ export class CwmDB extends Dexie {
           })
       })
 
+    // v3 — mold work lifecycle split into 4 states with three dates. The old
+    // single `endDate` (which meant "Done/Removed") becomes `removedDate`, and
+    // the old `Done/Removed` work status becomes `Material Removed`. Building
+    // dates are now DERIVED from molds (autoAdvance recomputes on load), so the
+    // stored building start/end are left as-is and reconciled at runtime.
+    this.version(3)
+      .stores({
+        buildings: 'id, ownerId, status, updatedAt',
+        molds: 'id, buildingId, order, workStatus, paymentStatus, [buildingId+order]',
+        workers: 'id, active, type, name',
+        owners: 'id, name',
+        attendance:
+          'id, workerId, buildingId, moldId, date, [workerId+date], [buildingId+date], [moldId+date]',
+        syncedTransactions:
+          'id, date, direction, subCategory, assignmentStatus, buildingId, moldId, workerId, importFingerprint',
+        otherExpenseTypes: 'id, name',
+        categoryMap: 'id, sourceName',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('molds')
+          .toCollection()
+          .modify((m: Record<string, unknown>) => {
+            const endDate = typeof m.endDate === 'string' ? (m.endDate as string) : undefined
+            if (m.workStatus === 'Done/Removed') {
+              m.workStatus = 'Material Removed'
+              if (endDate && m.removedDate == null) m.removedDate = endDate
+            } else if (endDate && m.removedDate == null) {
+              // Defensive: any other row carrying an endDate keeps it as removed.
+              m.removedDate = endDate
+            }
+            delete m.endDate
+          })
+      })
+
     this.on('populate', () => {
       this.settings.add(defaultSettings())
       this.otherExpenseTypes.bulkAdd(

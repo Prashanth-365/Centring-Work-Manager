@@ -48,7 +48,8 @@ export function MoldForm() {
   const [billPdfLink, setBillPdfLink] = React.useState('')
   const [workStatus, setWorkStatus] = React.useState<MoldWorkStatus>('Not Started')
   const [startDate, setStartDate] = React.useState('')
-  const [endDate, setEndDate] = React.useState('')
+  const [completedDate, setCompletedDate] = React.useState('')
+  const [removedDate, setRemovedDate] = React.useState('')
   const [notes, setNotes] = React.useState('')
   const [error, setError] = React.useState('')
   const [saving, setSaving] = React.useState(false)
@@ -64,7 +65,8 @@ export function MoldForm() {
       setBillPdfLink(existing.billPdfLink ?? '')
       setWorkStatus(existing.workStatus)
       setStartDate(existing.startDate ?? '')
-      setEndDate(existing.endDate ?? '')
+      setCompletedDate(existing.completedDate ?? '')
+      setRemovedDate(existing.removedDate ?? '')
       setNotes(existing.notes ?? '')
     }
   }, [existing])
@@ -78,15 +80,17 @@ export function MoldForm() {
     return [...names].map((n) => ({ value: n, label: n }))
   }, [allMolds, floorName])
 
-  /** Work status → date (§4) as the user picks. */
+  /** Work status → date as the user picks (sets today when empty; clears on reset). */
   function applyWorkStatus(next: MoldWorkStatus) {
     setWorkStatus(next)
     const patch = moldDatesForStatusChange(next, {
       startDate: startDate || undefined,
-      endDate: endDate || undefined,
+      completedDate: completedDate || undefined,
+      removedDate: removedDate || undefined,
     })
     if ('startDate' in patch) setStartDate(patch.startDate ?? '')
-    if ('endDate' in patch) setEndDate(patch.endDate ?? '')
+    if ('completedDate' in patch) setCompletedDate(patch.completedDate ?? '')
+    if ('removedDate' in patch) setRemovedDate(patch.removedDate ?? '')
   }
 
   async function submit(e: React.FormEvent) {
@@ -105,7 +109,8 @@ export function MoldForm() {
       billPdfLink: billPdfLink.trim() || undefined,
       workStatus,
       startDate: startDate || undefined,
-      endDate: endDate || undefined,
+      completedDate: completedDate || undefined,
+      removedDate: removedDate || undefined,
       notes: notes.trim() || undefined,
     }
     if (editing) {
@@ -181,15 +186,25 @@ export function MoldForm() {
         </Select>
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Start date">
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Start date" hint="Work began">
           {(fid) => (
             <Input id={fid} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           )}
         </Field>
-        <Field label="Removed / end date">
+        <Field label="Completed date" hint="Slab cast">
           {(fid) => (
-            <Input id={fid} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <Input
+              id={fid}
+              type="date"
+              value={completedDate}
+              onChange={(e) => setCompletedDate(e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label="Removed date" hint="Material off">
+          {(fid) => (
+            <Input id={fid} type="date" value={removedDate} onChange={(e) => setRemovedDate(e.target.value)} />
           )}
         </Field>
       </div>

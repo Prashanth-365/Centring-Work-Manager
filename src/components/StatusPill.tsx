@@ -15,7 +15,8 @@ const BUILDING: Record<BuildingStatus, Variant> = {
 const WORK: Record<MoldWorkStatus, Variant> = {
   'Not Started': 'muted',
   'In Progress': 'default',
-  'Done/Removed': 'success',
+  Completed: 'success',
+  'Material Removed': 'secondary',
 }
 
 const PAY: Record<MoldPaymentStatus, Variant> = {

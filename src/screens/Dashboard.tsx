@@ -84,14 +84,14 @@ export function Dashboard() {
   // Receivables
   const totalReceivable = buildingComputed.reduce((s, x) => s + x.receivable, 0)
 
-  // Go-collect: Done/Removed and not Paid past threshold
+  // Go-collect: work done (cast or material removed) and not Paid past threshold.
   const goCollect = React.useMemo(() => {
     const items: { mold: (typeof molds)[number]; building: (typeof buildings)[number]; owner?: string; amount: number; days: number }[] = []
     for (const b of buildings) {
       if (b.status === 'Closed') continue
       for (const m of moldsByBuilding.get(b.id) ?? []) {
-        if (m.workStatus === 'Done/Removed' && m.paymentStatus !== 'Paid') {
-          const ref = m.endDate ?? m.startDate
+        if ((m.workStatus === 'Completed' || m.workStatus === 'Material Removed') && m.paymentStatus !== 'Paid') {
+          const ref = m.removedDate ?? m.completedDate ?? m.startDate
           const overdue = ref ? daysSince(ref) : daysSince(format(new Date(m.updatedAt), 'yyyy-MM-dd'))
           if (overdue >= threshold) {
             items.push({

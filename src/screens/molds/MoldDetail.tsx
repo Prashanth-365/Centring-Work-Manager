@@ -16,9 +16,11 @@ import {
 } from '@/lib/hooks'
 import { updateMold } from '@/lib/repo'
 import { receiptsForMold } from '@/lib/compute/profit'
+import { moldDatesForStatusChange } from '@/lib/compute/status'
 import { byId, buildingName, moldOutstanding } from '@/lib/select'
 import { formatDate, todayISO } from '@/lib/dates'
 import { days, money } from '@/lib/format'
+import type { MoldWorkStatus } from '@/lib/types'
 
 export function MoldDetail() {
   const { id } = useParams()
@@ -37,6 +39,22 @@ export function MoldDetail() {
   const entries = attendanceAll
     .filter((a) => a.moldId === mold.id)
     .sort((a, b) => (a.date < b.date ? 1 : -1))
+
+  // Advance the work status and stamp its date (today when empty) so the change
+  // survives the midnight auto-advance.
+  function advanceTo(next: MoldWorkStatus) {
+    if (!mold) return
+    const patch = moldDatesForStatusChange(
+      next,
+      {
+        startDate: mold.startDate,
+        completedDate: mold.completedDate,
+        removedDate: mold.removedDate,
+      },
+      todayISO(),
+    )
+    void updateMold(mold.id, { workStatus: next, ...patch })
+  }
 
   return (
     <>
@@ -61,7 +79,7 @@ export function MoldDetail() {
 
         <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <CalendarRange className="size-4" />
-          {formatDate(mold.startDate)} → {formatDate(mold.endDate)}
+          {formatDate(mold.startDate)} → {formatDate(mold.completedDate)} → {formatDate(mold.removedDate)}
         </p>
 
         <div className="grid grid-cols-3 gap-2.5">
@@ -70,18 +88,23 @@ export function MoldDetail() {
           <Stat label="Outstanding" value={money(outstanding)} tone={outstanding > 0 ? 'danger' : 'default'} />
         </div>
 
-        {/* Quick status actions. Work status sets its date so it survives the
-            midnight auto-advance; payment status is auto-derived from the bill
-            and assigned owner receipts, so it has no manual button. */}
+        {/* Quick status actions. Each advances the work status and stamps its
+            date so it survives the midnight auto-advance; payment status is
+            auto-derived from the bill and assigned owner receipts, so it has no
+            manual button. */}
         <div className="flex flex-wrap gap-2">
-          {mold.workStatus !== 'Done/Removed' && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                updateMold(mold.id, { workStatus: 'Done/Removed', endDate: mold.endDate || todayISO() })
-              }
-            >
+          {mold.workStatus === 'Not Started' && (
+            <Button variant="secondary" size="sm" onClick={() => advanceTo('In Progress')}>
+              Start work
+            </Button>
+          )}
+          {mold.workStatus === 'In Progress' && (
+            <Button variant="secondary" size="sm" onClick={() => advanceTo('Completed')}>
+              Mark cast
+            </Button>
+          )}
+          {mold.workStatus === 'Completed' && (
+            <Button variant="secondary" size="sm" onClick={() => advanceTo('Material Removed')}>
               Mark removed
             </Button>
           )}

@@ -18,8 +18,10 @@ import {
 } from '@/components/ui/select'
 import { useBuilding, useOwners } from '@/lib/hooks'
 import { createBuilding, deleteBuilding, quickCreateOwner, updateBuilding } from '@/lib/repo'
-import { datesForStatusChange } from '@/lib/compute/status'
+import { buildingDatesForStatusChange } from '@/lib/compute/status'
+import { runAutoAdvance } from '@/lib/autoAdvance'
 import { byId, buildingName } from '@/lib/select'
+import { formatDate } from '@/lib/dates'
 import { BUILDING_STATUSES } from '@/lib/constants'
 import type { BuildingStatus } from '@/lib/types'
 
@@ -61,14 +63,13 @@ export function BuildingForm() {
   const ownersById = React.useMemo(() => byId(owners), [owners])
   const derivedName = buildingName({ ownerId, location: location.trim() || undefined }, ownersById)
 
-  /** Status → date: applying the spec's bidirectional rules as the user picks. */
+  /**
+   * Status → date. Building dates are otherwise DERIVED from the molds (read-only
+   * below); only a manual Completed/Closed stamps endDate = today.
+   */
   function applyStatus(next: BuildingStatus) {
     setStatus(next)
-    const patch = datesForStatusChange(next, {
-      startDate: startDate || undefined,
-      endDate: endDate || undefined,
-    })
-    if ('startDate' in patch) setStartDate(patch.startDate ?? '')
+    const patch = buildingDatesForStatusChange(next, { endDate: endDate || undefined })
     if ('endDate' in patch) setEndDate(patch.endDate ?? '')
   }
 
@@ -95,6 +96,7 @@ export function BuildingForm() {
     }
     if (editing) {
       await updateBuilding(id!, data)
+      await runAutoAdvance() // reconcile derived dates + roll-up status
       navigate(`/buildings/${id}`, { replace: true })
     } else {
       const newId = await createBuilding(data)
@@ -181,15 +183,15 @@ export function BuildingForm() {
       </Field>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Start date">
-          {(fid) => (
-            <Input id={fid} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          )}
+        <Field label="Start date" hint="Auto from first mold to start">
+          <div className="flex h-11 items-center rounded-lg border border-dashed border-input bg-muted/40 px-3 text-base text-muted-foreground">
+            {formatDate(startDate)}
+          </div>
         </Field>
-        <Field label="End date">
-          {(fid) => (
-            <Input id={fid} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          )}
+        <Field label="End date" hint="Auto when all molds removed / Completed">
+          <div className="flex h-11 items-center rounded-lg border border-dashed border-input bg-muted/40 px-3 text-base text-muted-foreground">
+            {formatDate(endDate)}
+          </div>
         </Field>
       </div>
 

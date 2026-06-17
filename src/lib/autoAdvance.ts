@@ -1,20 +1,21 @@
-// Status auto-advance runtime (§4). Re-runs the pure status↔date derivation
+// Status auto-advance runtime. Re-runs the pure status↔date derivation
 // (compute/status.ts) and writes back any row whose real dates have moved it on
 // — on app load, when the app returns to the foreground, and at local midnight.
 // Idempotent: when nothing has changed it writes nothing.
 import {
-  deriveBuildingStatus,
+  deriveBuildingDates,
   deriveMoldPaymentStatus,
   deriveMoldWorkStatus,
+  nextBuildingStatus,
   shouldAutoClose,
 } from './compute/status'
 import { receiptsForMold } from './compute/profit'
 import { todayISO } from './dates'
 import { db } from './db'
 import { now } from './ids'
-import type { BuildingStatus, Mold } from './types'
+import type { Building, Mold } from './types'
 
-/** Recompute mold work/payment status and building status; persist diffs. */
+/** Recompute mold work/payment status and building status + dates; persist diffs. */
 export async function runAutoAdvance(today: string = todayISO()): Promise<void> {
   const [buildings, molds, receipts] = await Promise.all([
     db.buildings.toArray(),
@@ -23,7 +24,7 @@ export async function runAutoAdvance(today: string = todayISO()): Promise<void> 
   ])
 
   await db.transaction('rw', db.buildings, db.molds, async () => {
-    // Molds first so building auto-close sees fresh payment statuses.
+    // Molds first so building roll-up + auto-close see fresh statuses.
     for (const m of molds) {
       const received = receiptsForMold(m.id, receipts)
       const workStatus = deriveMoldWorkStatus(m, today)
@@ -33,17 +34,33 @@ export async function runAutoAdvance(today: string = todayISO()): Promise<void> 
       if (paymentStatus !== m.paymentStatus) patch.paymentStatus = paymentStatus
       if (Object.keys(patch).length) {
         await db.molds.update(m.id, { ...patch, updatedAt: now() })
-        m.workStatus = workStatus // reflect locally for the auto-close check below
+        m.workStatus = workStatus // reflect locally for the roll-up below
         m.paymentStatus = paymentStatus
       }
     }
 
     for (const b of buildings) {
-      const derived = deriveBuildingStatus(b, today)
-      if (derived == null) continue // On Hold / Closed are manual — they win.
       const buildingMolds = molds.filter((m) => m.buildingId === b.id)
-      const next: BuildingStatus = shouldAutoClose(derived, buildingMolds) ? 'Closed' : derived
-      if (next !== b.status) await db.buildings.update(b.id, { status: next, updatedAt: now() })
+      const patch: Partial<Building> = {}
+
+      // Building status roll-up (manual Completed/Closed/On-Hold handled inside).
+      const rolled = nextBuildingStatus(b.status, buildingMolds, today)
+      let status = rolled ?? b.status
+      if (shouldAutoClose(status, buildingMolds)) status = 'Closed'
+      if (status !== b.status) patch.status = status
+
+      // Derived dates: startDate from molds always; endDate from molds once all
+      // are Material Removed, except a manual Completed/Closed building keeps the
+      // endDate stamped when the user marked it (today at that time).
+      const { startDate, endDate } = deriveBuildingDates(buildingMolds, today)
+      if (startDate !== b.startDate) patch.startDate = startDate
+      const manualEnd = status === 'Completed' || status === 'Closed'
+      const nextEnd = manualEnd ? (b.endDate ?? endDate ?? today) : endDate
+      if (nextEnd !== b.endDate) patch.endDate = nextEnd
+
+      if (Object.keys(patch).length) {
+        await db.buildings.update(b.id, { ...patch, updatedAt: now() })
+      }
     }
   })
 }
