@@ -228,7 +228,7 @@ export function Settings() {
         <DataSection settings={settingsRow} />
 
         <p className="pt-2 text-center text-xs text-muted-foreground">
-          Centering Work Manager · all data stays on this device
+          Centering Work Manager · v{__APP_VERSION__} · all data stays on this device
         </p>
       </div>
     </>

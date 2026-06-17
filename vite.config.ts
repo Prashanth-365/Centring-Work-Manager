@@ -2,8 +2,15 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
+import { createRequire } from 'node:module'
+
+const pkg = createRequire(import.meta.url)('./package.json') as { version: string }
 
 export default defineConfig({
+  define: {
+    // App version (from package.json), inlined at build time for the UI/About.
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [
     react(),
     VitePWA({

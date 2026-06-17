@@ -35,4 +35,19 @@ else
   echo "patch-android: WARNING AndroidManifest.xml not found, skipping permission patch." >&2
 fi
 
+# 3. Register the OAuth deep-link intent-filter on MainActivity so the Chrome
+#    Custom-Tab sign-in can hand the token back via
+#    `app.centering.manager://oauth-success` (see src/lib/drive.ts). The app
+#    manifest has a single <activity> (MainActivity); idempotent via the grep.
+if [ -f "$MANIFEST" ]; then
+  if ! grep -q 'android:scheme="app.centering.manager"' "$MANIFEST"; then
+    sed -i 's#</activity>#    <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="app.centering.manager" android:host="oauth-success" />\n            </intent-filter>\n        </activity>#' "$MANIFEST"
+    echo "patch-android: added OAuth deep-link intent-filter."
+  else
+    echo "patch-android: OAuth deep-link intent-filter already present."
+  fi
+else
+  echo "patch-android: WARNING AndroidManifest.xml not found, skipping deep-link patch." >&2
+fi
+
 echo "patch-android: done."

@@ -16,13 +16,25 @@
 //
 // Scope is `drive.appdata` only, so this app cannot see (and never uploads to)
 // the user's normal Drive. Importing the finance app's export stays a manual,
-// local-file step on the Sync screen. Verifying end-to-end needs a real client
-// id + OAuth consent, which can't be exercised headlessly.
-import { GOOGLE_CLIENT_ID } from './env'
+// local-file step on the Sync screen.
+//
+// Two sign-in code paths (see BUILD_PROMPTS.md):
+//   - Web/PWA: Google Identity Services (GIS) token client.
+//   - Android (Capacitor WebView): GIS refuses to run in an embedded WebView, so
+//     we drive the OAuth implicit flow in a real Chrome Custom Tab and catch the
+//     token on the `app.centering.manager://oauth-success` deep link that the
+//     hosted `oauth-redirect.html` forwards to.
+// Verifying end-to-end needs a real client id + OAuth consent + a device, which
+// can't be exercised headlessly.
+import { App } from '@capacitor/app'
+import { GOOGLE_CLIENT_ID, OAUTH_REDIRECT_URL } from './env'
 import { isNative } from './native'
 
 const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive.appdata'
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
+
+/** Custom-scheme deep link that `oauth-redirect.html` forwards the token to. */
+const APP_OAUTH_SCHEME = 'app.centering.manager://oauth-success'
 
 /** Fixed filename for THIS app's encrypted Drive backup — overwritten in place. */
 export const DRIVE_BACKUP_NAME = 'construction-backup.json.enc'
@@ -103,30 +115,35 @@ export function disconnectDrive(): void {
   accessToken = undefined
   tokenExpiresAt = 0
   driveUser = undefined
-  if (token && window.google?.accounts?.oauth2?.revoke) {
+  if (!token) return
+  if (window.google?.accounts?.oauth2?.revoke) {
     try {
       window.google.accounts.oauth2.revoke(token, () => {})
+      return
     } catch {
-      /* best-effort revoke */
+      /* fall through to the REST revoke */
     }
   }
+  // Native (no GIS): best-effort revoke via the OAuth2 endpoint.
+  void fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+  }).catch(() => {})
 }
 
-/** Obtain (or reuse) a Drive access token via the GIS token client. */
+/** Obtain (or reuse) a Drive access token. Web uses GIS; native uses a Chrome
+ * Custom Tab + deep-link redirect. */
 async function getToken(forcePrompt = false): Promise<string> {
   if (!forcePrompt && isDriveConnected() && accessToken) return accessToken
 
-  if (isNative()) {
-    // GIS refuses to run inside an embedded WebView. The Android Chrome
-    // Custom-Tab + deep-link flow is not wired up yet — fail with a clear hint
-    // rather than silently breaking. (Tracked for a later milestone.)
-    throw new Error(
-      'Google Drive sign-in is available in the web app for now. Use a local backup on this device.',
-    )
-  }
-
   const clientId = effectiveClientId()
   if (!clientId) throw new Error('Google Drive is not configured — set VITE_GOOGLE_CLIENT_ID.')
+
+  if (isNative()) return getTokenNative(clientId)
+  return getTokenWeb(clientId, forcePrompt)
+}
+
+/** Web (browser / PWA): Google Identity Services token client. */
+async function getTokenWeb(clientId: string, forcePrompt: boolean): Promise<string> {
   await loadScript(GIS_SRC)
   const google = window.google
   if (!google?.accounts?.oauth2)
@@ -149,6 +166,76 @@ async function getToken(forcePrompt = false): Promise<string> {
     // Silent (no consent UI) when we already have a session; prompt otherwise.
     client.requestAccessToken({ prompt: forcePrompt || !driveUser ? 'consent' : '' })
   })
+}
+
+/** Android (Capacitor WebView): open Google's OAuth implicit URL in a Chrome
+ * Custom Tab and wait for the token on the `oauth-success` deep link. Needs
+ * `VITE_OAUTH_REDIRECT_URL` to point at the hosted `oauth-redirect.html`. */
+async function getTokenNative(clientId: string): Promise<string> {
+  if (!OAUTH_REDIRECT_URL) {
+    throw new Error(
+      'Google Drive sign-in needs VITE_OAUTH_REDIRECT_URL set to the hosted oauth-redirect.html.',
+    )
+  }
+  const { Browser } = await import('@capacitor/browser')
+
+  const state = cryptoRandom()
+  const authUrl =
+    'https://accounts.google.com/o/oauth2/v2/auth?' +
+    new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: OAUTH_REDIRECT_URL,
+      response_type: 'token',
+      scope: DRIVE_SCOPE,
+      state,
+      prompt: 'consent',
+      include_granted_scopes: 'true',
+    }).toString()
+
+  return new Promise<string>((resolve, reject) => {
+    let settled = false
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      void sub.then((h) => h.remove())
+      void Browser.close().catch(() => {})
+      fn()
+    }
+
+    const sub = App.addListener('appUrlOpen', ({ url }) => {
+      if (!url || url.indexOf(APP_OAUTH_SCHEME) !== 0) return
+      const frag = url.split('#')[1] ?? ''
+      const params = new URLSearchParams(frag)
+      const err = params.get('error')
+      if (err) {
+        finish(() => reject(new Error('Google sign-in failed: ' + err)))
+        return
+      }
+      if (params.get('state') !== state) {
+        finish(() => reject(new Error('Google sign-in failed: state mismatch (please retry).')))
+        return
+      }
+      const token = params.get('access_token')
+      if (!token) {
+        finish(() => reject(new Error('Google sign-in returned no access token.')))
+        return
+      }
+      accessToken = token
+      tokenExpiresAt = Date.now() + Number(params.get('expires_in') ?? 3600) * 1000
+      finish(() => resolve(token))
+    })
+
+    Browser.open({ url: authUrl }).catch((e) =>
+      finish(() => reject(new Error('Could not open the sign-in page: ' + (e as Error).message))),
+    )
+  })
+}
+
+/** URL-safe random string for the OAuth CSRF `state` parameter. */
+function cryptoRandom(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 /** Fetch the signed-in user's basic profile (email/name) for status display. */
