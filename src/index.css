@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 36 33% 98%;
+    --foreground: 222 35% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 35% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 35% 11%;
+
+    /* Construction amber */
+    --primary: 27 96% 47%;
+    --primary-foreground: 40 50% 99%;
+
+    --secondary: 36 22% 94%;
+    --secondary-foreground: 222 30% 18%;
+
+    --muted: 36 20% 95%;
+    --muted-foreground: 220 12% 44%;
+
+    --accent: 33 60% 95%;
+    --accent-foreground: 27 80% 32%;
+
+    --destructive: 0 74% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 58% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 95% 48%;
+    --warning-foreground: 30 50% 12%;
+
+    /* Deep ink, used for headers / strong surfaces */
+    --brand: 222 45% 14%;
+    --brand-foreground: 36 33% 97%;
+    --brand-muted: 222 22% 32%;
+
+    --border: 34 18% 89%;
+    --input: 34 18% 88%;
+    --ring: 27 96% 47%;
+
+    --radius: 0.85rem;
+  }
+
+  .dark {
+    --background: 222 38% 8%;
+    --foreground: 36 25% 96%;
+
+    --card: 222 32% 12%;
+    --card-foreground: 36 25% 96%;
+
+    --popover: 222 32% 12%;
+    --popover-foreground: 36 25% 96%;
+
+    --primary: 27 92% 52%;
+    --primary-foreground: 222 45% 9%;
+
+    --secondary: 222 22% 18%;
+    --secondary-foreground: 36 25% 94%;
+
+    --muted: 222 20% 17%;
+    --muted-foreground: 220 12% 64%;
+
+    --accent: 222 24% 20%;
+    --accent-foreground: 27 90% 62%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 52% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 30 50% 10%;
+
+    --brand: 222 30% 14%;
+    --brand-foreground: 36 33% 97%;
+    --brand-muted: 220 14% 70%;
+
+    --border: 222 20% 22%;
+    --input: 222 20% 24%;
+    --ring: 27 92% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+  /* Numbers align in tables / money */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+
+@layer utilities {
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pb-safe-nav {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 5rem);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+
+/* Subtle, premium scrollbars on desktop */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 9999px;
+  border: 3px solid hsl(var(--background));
+}
