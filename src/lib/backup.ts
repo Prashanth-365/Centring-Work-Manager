@@ -110,6 +110,28 @@ export async function restoreFromText(fileText: string, passphrase: string): Pro
   })
 }
 
+/** Pre-overwrite safety check: does `passphrase` decrypt this encrypted envelope?
+ * Used before replacing an existing Drive backup so a typo can't lock the next
+ * one. Returns false on any decrypt/parse failure rather than throwing. */
+export async function verifyEnvelopePassphrase(
+  fileText: string,
+  passphrase: string,
+): Promise<boolean> {
+  let env: BackupEnvelope
+  try {
+    env = JSON.parse(fileText)
+  } catch {
+    return false
+  }
+  if (env.app !== 'centering-work-manager' || !env.ciphertext) return false
+  try {
+    await decryptEnvelope(env, passphrase)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ---- plain-JSON backup ( { version, exportedAt, data:{...tables} } ) -------
 // Unencrypted, portable shape — used by the Settings → Data UI and Google Drive.
 // Mirrors the finance app's export layout (every table nested under `data`).

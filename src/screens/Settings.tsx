@@ -8,7 +8,6 @@ import {
   Database,
   DatabaseBackup,
   DownloadCloud,
-  FileUp,
   HardDriveDownload,
   Link2,
   Lock,
@@ -36,19 +35,25 @@ import { updateSettings, createOtherExpenseType } from '@/lib/repo'
 import { useOtherExpenseTypes } from '@/lib/hooks'
 import { derivePinHash } from '@/lib/crypto'
 import { enrollBiometric, isBiometricAvailable } from '@/lib/biometric'
-import { exportDataBackup, restoreDataBackup } from '@/lib/backup'
+import {
+  buildBackupEnvelope,
+  exportDataBackup,
+  restoreDataBackup,
+  restoreFromText,
+  verifyEnvelopePassphrase,
+} from '@/lib/backup'
 import { fileTimestamp, saveTextFile } from '@/lib/files'
 import {
   backupToDrive,
   connectDrive,
   disconnectDrive,
   driveConfigured,
+  getDriveUser,
   isDriveConnected,
-  pickFileText,
+  peekDriveBackupText,
   restoreFromDrive,
   setDriveClientId,
 } from '@/lib/drive'
-import { decryptAndSync } from '@/lib/sync'
 import { toast } from '@/lib/toast'
 import { CategoryMapping } from '@/screens/settings/CategoryMapping'
 import type { AppLockConfig, Settings as SettingsType, ShiftBlock } from '@/lib/types'
@@ -371,6 +376,9 @@ function DataSection({ settings }: { settings: SettingsType }) {
   const [confirmFile, setConfirmFile] = React.useState<File>()
   const [clientId, setClientId] = React.useState(settings.googleClientId ?? '')
   const [connected, setConnected] = React.useState(isDriveConnected())
+  const [email, setEmail] = React.useState(getDriveUser()?.email ?? settings.driveEmail ?? '')
+  const [driveAction, setDriveAction] = React.useState<'backup' | 'restore'>()
+  const [pass, setPass] = React.useState('')
   const driveOn = driveConfigured()
 
   async function withBusy(key: string, fn: () => Promise<void>) {
@@ -386,10 +394,11 @@ function DataSection({ settings }: { settings: SettingsType }) {
   }
 
   async function markDriveSync() {
-    await updateSettings({ lastDriveSyncAt: Date.now() })
+    const em = getDriveUser()?.email
+    await updateSettings({ lastDriveSyncAt: Date.now(), ...(em ? { driveEmail: em } : {}) })
   }
 
-  // --- Local backup / restore (plain JSON) ---
+  // --- Local backup / restore (plain JSON, on-device) ---
   async function localBackup() {
     await withBusy('local-backup', async () => {
       const json = await exportDataBackup()
@@ -406,7 +415,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
     })
   }
 
-  // --- Google Drive ---
+  // --- Google Drive (encrypted backup in the user's private appDataFolder) ---
   async function saveClientId() {
     const trimmed = clientId.trim()
     await updateSettings({ googleClientId: trimmed })
@@ -416,9 +425,11 @@ function DataSection({ settings }: { settings: SettingsType }) {
 
   async function connect() {
     await withBusy('connect', async () => {
-      await connectDrive()
+      const user = await connectDrive()
       setConnected(true)
-      toast.success('Connected to Google Drive.')
+      setEmail(user.email ?? '')
+      if (user.email) await updateSettings({ driveEmail: user.email })
+      toast.success(user.email ? `Connected as ${user.email}.` : 'Connected to Google Drive.')
     })
   }
 
@@ -428,37 +439,51 @@ function DataSection({ settings }: { settings: SettingsType }) {
     toast.info('Disconnected from Google Drive.')
   }
 
-  async function driveBackup() {
+  // Drive backup/restore are encrypted on-device — collect a passphrase first.
+  function startDrive(action: 'backup' | 'restore') {
+    setPass('')
+    setDriveAction(action)
+  }
+
+  async function runDriveBackup(passphrase: string) {
     await withBusy('drive-backup', async () => {
-      const json = await exportDataBackup()
-      await backupToDrive(json)
+      // Pre-overwrite safety: if a backup already exists, the passphrase MUST
+      // decrypt it — otherwise a typo would lock the next restore.
+      const existing = await peekDriveBackupText()
+      if (existing && !(await verifyEnvelopePassphrase(existing, passphrase))) {
+        throw new Error(
+          'That passphrase does not match your existing Drive backup. Use the same one, or disconnect to start fresh.',
+        )
+      }
+      const envelope = await buildBackupEnvelope(passphrase)
+      await backupToDrive(JSON.stringify(envelope))
       setConnected(true)
       await markDriveSync()
-      toast.success('Backed up to Google Drive.')
+      toast.success('Encrypted backup saved to Google Drive.')
     })
   }
 
-  async function driveRestore() {
+  async function runDriveRestore(passphrase: string) {
     await withBusy('drive-restore', async () => {
       const text = await restoreFromDrive()
-      const { tables, rows } = await restoreDataBackup(text)
+      await restoreFromText(text, passphrase)
       setConnected(true)
       await markDriveSync()
-      toast.success(`Restored ${rows} records across ${tables} tables. Reloading…`)
+      toast.success('Restored from Google Drive. Reloading…')
       setTimeout(() => window.location.reload(), 1100)
     })
   }
 
-  async function importFinanceFromDrive() {
-    await withBusy('drive-import', async () => {
-      const text = await pickFileText() // flow B — Picker grants access to that file
-      if (!text) return // user cancelled
-      setConnected(true)
-      const result = await decryptAndSync(text, '')
-      toast.success(
-        `Imported ${result.totalConstruction} Construction transactions (${result.added} new).`,
-      )
-    })
+  function submitDrive() {
+    const action = driveAction
+    const passphrase = pass
+    if (passphrase.length < 8) {
+      toast.error('Passphrase must be at least 8 characters.')
+      return
+    }
+    setDriveAction(undefined)
+    if (action === 'backup') void runDriveBackup(passphrase)
+    else if (action === 'restore') void runDriveRestore(passphrase)
   }
 
   const lastSync = settings.lastDriveSyncAt
@@ -494,7 +519,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
         />
       </div>
 
-      {/* Google Drive */}
+      {/* Google Drive — encrypted backup in your private app folder */}
       <div className="space-y-3 rounded-lg border border-border bg-accent/30 p-3">
         <div className="flex items-center justify-between">
           <h3 className="flex items-center gap-1.5 text-sm font-semibold">
@@ -509,6 +534,12 @@ function DataSection({ settings }: { settings: SettingsType }) {
             {connected ? 'Connected' : driveOn ? 'Not connected' : 'Not set up'}
           </span>
         </div>
+
+        <p className="text-xs text-muted-foreground">
+          Backs up this app’s data, <span className="font-medium text-foreground">encrypted</span>{' '}
+          with your passphrase, to a private folder in your own Google Drive. Only this app can see
+          it; no one else — not even the developer — can read it.
+        </p>
 
         <Field label="OAuth Web client id" hint="From your Google Cloud project (or set VITE_GOOGLE_CLIENT_ID)">
           {(id) => (
@@ -530,6 +561,11 @@ function DataSection({ settings }: { settings: SettingsType }) {
 
         {driveOn ? (
           <>
+            {connected && email && (
+              <p className="truncate text-xs text-muted-foreground">
+                Signed in as <span className="font-medium text-foreground">{email}</span>
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2.5">
               {connected ? (
                 <Button variant="outline" onClick={disconnect}>
@@ -542,15 +578,20 @@ function DataSection({ settings }: { settings: SettingsType }) {
                   {busy === 'connect' ? 'Connecting…' : 'Connect'}
                 </Button>
               )}
-              <Button variant="outline" onClick={importFinanceFromDrive} disabled={busy === 'drive-import'}>
-                <FileUp className="size-4" />
-                {busy === 'drive-import' ? 'Opening…' : 'Import finance'}
-              </Button>
-              <Button variant="outline" onClick={driveBackup} disabled={busy === 'drive-backup'}>
+              <Button
+                variant="outline"
+                onClick={() => startDrive('backup')}
+                disabled={busy === 'drive-backup'}
+              >
                 <CloudUpload className="size-4" />
                 {busy === 'drive-backup' ? 'Backing up…' : 'Back up to Drive'}
               </Button>
-              <Button variant="outline" onClick={driveRestore} disabled={busy === 'drive-restore'}>
+              <Button
+                variant="outline"
+                className="col-span-2"
+                onClick={() => startDrive('restore')}
+                disabled={busy === 'drive-restore'}
+              >
                 <CloudDownload className="size-4" />
                 {busy === 'drive-restore' ? 'Restoring…' : 'Restore from Drive'}
               </Button>
@@ -561,10 +602,60 @@ function DataSection({ settings }: { settings: SettingsType }) {
           </>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Add an OAuth client id above to enable Google Drive backup, restore, and finance import.
+            Add an OAuth client id above to enable encrypted Google Drive backup and restore.
           </p>
         )}
       </div>
+
+      {/* Drive passphrase prompt — the payload is encrypted on-device. */}
+      <Dialog open={!!driveAction} onOpenChange={(o) => !o && setDriveAction(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {driveAction === 'restore' ? 'Restore from Google Drive' : 'Back up to Google Drive'}
+            </DialogTitle>
+            <DialogDescription>
+              {driveAction === 'restore'
+                ? 'Enter the passphrase you used for this Drive backup. It decrypts on this device, then replaces ALL current data.'
+                : 'Choose a passphrase (min 8 characters). You’ll need the exact same one to restore — it’s never stored or sent anywhere.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="password"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              placeholder="Backup passphrase"
+              className="pl-9"
+              autoComplete="off"
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && submitDrive()}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDriveAction(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              variant={driveAction === 'restore' ? 'destructive' : 'default'}
+              onClick={submitDrive}
+            >
+              {driveAction === 'restore' ? (
+                <>
+                  <CloudDownload className="size-4" />
+                  Decrypt &amp; restore
+                </>
+              ) : (
+                <>
+                  <CloudUpload className="size-4" />
+                  Encrypt &amp; back up
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Restore confirmation — replacing all local data is destructive. */}
       <Dialog open={!!confirmFile} onOpenChange={(o) => !o && setConfirmFile(undefined)}>

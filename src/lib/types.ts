@@ -192,6 +192,8 @@ export interface Settings {
   /** OAuth 2.0 Web client id for Google Drive (GIS). Optional — falls back to
    * the VITE_GOOGLE_CLIENT_ID build env. When neither is set, Drive is hidden. */
   googleClientId?: string
+  /** Email of the Google account last connected for Drive backup (status display). */
+  driveEmail?: string
   /** Epoch ms of the last successful Drive backup/restore, for status display. */
   lastDriveSyncAt?: number
   updatedAt: number

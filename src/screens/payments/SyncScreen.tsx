@@ -1,12 +1,11 @@
 import * as React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CheckCircle2, CloudDownload, FileUp, Lock, ShieldCheck, TriangleAlert } from 'lucide-react'
+import { CheckCircle2, FileUp, Lock, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Field } from '@/components/Field'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { decryptAndSync, type SyncResult } from '@/lib/sync'
-import { driveConfigured, pickFileText } from '@/lib/drive'
 import { cn } from '@/lib/utils'
 
 export function SyncScreen() {
@@ -37,16 +36,6 @@ export function SyncScreen() {
       return
     }
     await syncText(await file.text())
-  }
-
-  async function runDrive() {
-    setError('')
-    try {
-      const text = await pickFileText()
-      if (text) await syncText(text)
-    } catch (e) {
-      setError((e as Error).message)
-    }
   }
 
   return (
@@ -89,13 +78,6 @@ export function SyncScreen() {
             </span>
           </button>
         </Field>
-
-        {driveConfigured() && (
-          <Button type="button" variant="outline" className="w-full" onClick={runDrive} disabled={busy}>
-            <CloudDownload className="size-4" />
-            Pick from Google Drive
-          </Button>
-        )}
 
         <Field label="Passphrase" hint="Leave blank for an unencrypted (plain JSON) backup">
           {(fid) => (

@@ -1,34 +1,43 @@
 // Google Drive integration via Google Identity Services (GIS token client) — NOT
-// the deprecated gapi.auth2. Gated by `driveConfigured()` so the offline
-// file-picker path is unaffected when Drive isn't set up.
+// the deprecated gapi.auth2. Gated by `driveConfigured()` so the app builds/runs
+// fine when Drive isn't set up.
 //
-// The OAuth Web client id comes from Settings at runtime (`setDriveClientId`)
-// or the VITE_GOOGLE_CLIENT_ID build env as a fallback. Scope is `drive.file`
-// (per-file access). Two flows:
-//   A) Backup/restore THIS app's own data — upload (create/overwrite the fixed
-//      file `construction-backup.json`) + restore (list by name, download newest).
-//   B) Import the finance app's export — the Google Picker grants access to the
-//      specific file the user selects, even under drive.file (`pickFileText`).
-// Scripts load on demand. Verifying end-to-end needs a real client id + OAuth
-// consent, which can't be exercised headlessly.
+// Architecture (see BUILD_PROMPTS.md):
+//   - One shared app Client ID identifies the APP, not the user. It comes from
+//     `VITE_GOOGLE_CLIENT_ID` (or, for the owner-operator's convenience, an
+//     optional per-device override via `setDriveClientId`). No client secret —
+//     the public client id is safe to ship.
+//   - Each user signs in with their OWN Google account and the backup is stored
+//     in Drive's hidden, app-private `appDataFolder` IN THEIR OWN DRIVE. The app
+//     can only see files IT created; the developer can never read user data.
+//   - The payload is encrypted on-device (AES-256-GCM / PBKDF2) BEFORE upload —
+//     see backup.ts (`buildBackupEnvelope` / `restoreFromText`).
+//   - The OAuth access token is in-memory only and re-acquired on expiry.
+//
+// Scope is `drive.appdata` only, so this app cannot see (and never uploads to)
+// the user's normal Drive. Importing the finance app's export stays a manual,
+// local-file step on the Sync screen. Verifying end-to-end needs a real client
+// id + OAuth consent, which can't be exercised headlessly.
 import { GOOGLE_CLIENT_ID } from './env'
+import { isNative } from './native'
 
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive.appdata'
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
-const GAPI_SRC = 'https://apis.google.com/js/api.js'
 
-/** Fixed filename for THIS app's own Drive backup (flow A) — overwritten in place. */
-export const DRIVE_BACKUP_NAME = 'construction-backup.json'
+/** Fixed filename for THIS app's encrypted Drive backup — overwritten in place. */
+export const DRIVE_BACKUP_NAME = 'construction-backup.json.enc'
 
-// Minimal ambient typings — the SDKs attach to window at runtime.
+/** Treat the token as expired this many ms early to avoid edge-of-expiry 401s. */
+const TOKEN_SKEW_MS = 5_000
+
+// Minimal ambient typings — the SDK attaches to window at runtime.
 declare global {
   interface Window {
     google?: any // eslint-disable-line @typescript-eslint/no-explicit-any
-    gapi?: any // eslint-disable-line @typescript-eslint/no-explicit-any
   }
 }
 
-// Runtime client id (set from Settings); falls back to the build-time env var.
+// Runtime client id (optional per-device override); falls back to the build env.
 let runtimeClientId = ''
 
 /** Set the OAuth client id from Settings. Call on app boot + when it changes. */
@@ -37,6 +46,7 @@ export function setDriveClientId(id: string | undefined): void {
   if (next !== runtimeClientId) {
     runtimeClientId = next
     accessToken = undefined // a new client id invalidates any existing token
+    tokenExpiresAt = 0
   }
 }
 
@@ -65,84 +75,131 @@ function loadScript(src: string): Promise<void> {
   return p
 }
 
-let accessToken: string | undefined
+// ---- in-memory token + connected user ------------------------------------
 
-/** True once an access token has been obtained this session. */
-export function isDriveConnected(): boolean {
-  return !!accessToken
+let accessToken: string | undefined
+let tokenExpiresAt = 0
+let driveUser: DriveUser | undefined
+
+export interface DriveUser {
+  email?: string
+  name?: string
+  picture?: string
 }
 
-/** Forget the current token (sign-out within this app). */
+/** True while a non-expired access token is held this session. */
+export function isDriveConnected(): boolean {
+  return !!accessToken && Date.now() < tokenExpiresAt - TOKEN_SKEW_MS
+}
+
+/** The Google account connected this session, if any. */
+export function getDriveUser(): DriveUser | undefined {
+  return driveUser
+}
+
+/** Forget + revoke the current token (sign-out within this app). */
 export function disconnectDrive(): void {
+  const token = accessToken
   accessToken = undefined
+  tokenExpiresAt = 0
+  driveUser = undefined
+  if (token && window.google?.accounts?.oauth2?.revoke) {
+    try {
+      window.google.accounts.oauth2.revoke(token, () => {})
+    } catch {
+      /* best-effort revoke */
+    }
+  }
 }
 
 /** Obtain (or reuse) a Drive access token via the GIS token client. */
-async function getToken(): Promise<string> {
+async function getToken(forcePrompt = false): Promise<string> {
+  if (!forcePrompt && isDriveConnected() && accessToken) return accessToken
+
+  if (isNative()) {
+    // GIS refuses to run inside an embedded WebView. The Android Chrome
+    // Custom-Tab + deep-link flow is not wired up yet — fail with a clear hint
+    // rather than silently breaking. (Tracked for a later milestone.)
+    throw new Error(
+      'Google Drive sign-in is available in the web app for now. Use a local backup on this device.',
+    )
+  }
+
   const clientId = effectiveClientId()
-  if (!clientId) throw new Error('Google Drive is not configured — add an OAuth client id in Settings.')
+  if (!clientId) throw new Error('Google Drive is not configured — set VITE_GOOGLE_CLIENT_ID.')
   await loadScript(GIS_SRC)
   const google = window.google
-  if (!google?.accounts?.oauth2) throw new Error('Google Identity could not be loaded — check your connection.')
+  if (!google?.accounts?.oauth2)
+    throw new Error('Google Identity could not be loaded — check your connection.')
+
   return new Promise<string>((resolve, reject) => {
     const client = google.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPE,
-      callback: (resp: { access_token?: string; error?: string }) => {
+      callback: (resp: { access_token?: string; expires_in?: number; error?: string }) => {
         if (resp.error || !resp.access_token) {
           reject(new Error(resp.error || 'Google authorization was cancelled or failed.'))
           return
         }
         accessToken = resp.access_token
+        tokenExpiresAt = Date.now() + (resp.expires_in ?? 3600) * 1000
         resolve(resp.access_token)
       },
     })
-    client.requestAccessToken({ prompt: accessToken ? '' : 'consent' })
+    // Silent (no consent UI) when we already have a session; prompt otherwise.
+    client.requestAccessToken({ prompt: forcePrompt || !driveUser ? 'consent' : '' })
   })
 }
 
-/** Run the GIS token flow ("Connect Google Drive"). Throws on cancel/failure. */
-export async function connectDrive(): Promise<void> {
-  await getToken()
+/** Fetch the signed-in user's basic profile (email/name) for status display. */
+async function fetchUserInfo(token: string): Promise<DriveUser> {
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return {}
+    const u = (await r.json()) as { email?: string; name?: string; picture?: string }
+    return { email: u.email, name: u.name, picture: u.picture }
+  } catch {
+    return {}
+  }
 }
 
-/** Open the Google Picker and return the chosen file's text (flow B — the
- * finance export, created by a different app, so the Picker grants access). */
-export async function pickFileText(): Promise<string | undefined> {
-  const token = await getToken()
-  await loadScript(GAPI_SRC)
-  await new Promise<void>((resolve) => window.gapi.load('picker', () => resolve()))
-  const google = window.google
-  return new Promise<string | undefined>((resolve, reject) => {
-    const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes(
-      'application/json,text/plain',
-    )
-    const picker = new google.picker.PickerBuilder()
-      .setOAuthToken(token)
-      .addView(view)
-      .setCallback(async (data: { action: string; docs?: { id: string }[] }) => {
-        if (data.action === google.picker.Action.PICKED && data.docs?.[0]) {
-          try {
-            resolve(await downloadDriveFile(data.docs[0].id))
-          } catch (e) {
-            reject(e)
-          }
-        } else if (data.action === google.picker.Action.CANCEL) {
-          resolve(undefined)
-        }
-      })
-      .build()
-    picker.setVisible(true)
-  })
+/** Run the GIS token flow ("Connect Google Drive") and load the user profile. */
+export async function connectDrive(): Promise<DriveUser> {
+  const token = await getToken(true)
+  driveUser = await fetchUserInfo(token)
+  return driveUser
 }
 
-export async function downloadDriveFile(fileId: string): Promise<string> {
-  const token = accessToken ?? (await getToken())
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-    headers: { Authorization: `Bearer ${token}` },
+/** Authorized fetch that retries once after a silent re-auth on 401, and turns
+ * the common Drive 403s into actionable messages. */
+async function authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  let token = await getToken()
+  const withAuth = (t: string): RequestInit => ({
+    ...init,
+    headers: { ...(init.headers ?? {}), Authorization: `Bearer ${t}` },
   })
-  if (!r.ok) throw new Error('Could not download the Drive file.')
-  return r.text()
+  let r = await fetch(input, withAuth(token))
+  if (r.status === 401) {
+    accessToken = undefined
+    tokenExpiresAt = 0
+    token = await getToken(true)
+    r = await fetch(input, withAuth(token))
+  }
+  if (r.status === 403) {
+    const body = await r.text().catch(() => '')
+    if (/accessNotConfigured|SERVICE_DISABLED/i.test(body)) {
+      throw new Error(
+        'Google Drive API is not enabled for this project — enable it in Google Cloud Console.',
+      )
+    }
+    if (/insufficient|insufficientPermissions|scope/i.test(body)) {
+      throw new Error('Missing Drive permission — disconnect and connect again to grant access.')
+    }
+    throw new Error('Google Drive refused the request (403).')
+  }
+  return r
 }
 
 export interface DriveFile {
@@ -151,24 +208,28 @@ export interface DriveFile {
   modifiedTime?: string
 }
 
-/** This app's own backups on Drive (files we created, newest first). */
-export async function listAppBackups(): Promise<DriveFile[]> {
-  const token = await getToken()
-  const q = encodeURIComponent(
-    `(name = '${DRIVE_BACKUP_NAME}' or name contains 'construction-backup' or name contains 'centering-backup') and trashed = false`,
-  )
-  const r = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc`,
-    { headers: { Authorization: `Bearer ${token}` } },
+/** Find THIS app's single backup in the user's private appDataFolder. */
+async function findDriveBackup(): Promise<DriveFile | undefined> {
+  const q = encodeURIComponent(`name = '${DRIVE_BACKUP_NAME}' and trashed = false`)
+  const r = await authedFetch(
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc`,
   )
   if (!r.ok) throw new Error('Could not list Drive backups.')
   const data = (await r.json()) as { files?: DriveFile[] }
-  return data.files ?? []
+  return data.files?.[0]
 }
 
-function multipartBody(filename: string, content: string): { boundary: string; body: string } {
+async function downloadDriveFile(fileId: string): Promise<string> {
+  const r = await authedFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`)
+  if (!r.ok) throw new Error('Could not download the Drive backup.')
+  return r.text()
+}
+
+function multipartBody(
+  metadata: Record<string, unknown>,
+  content: string,
+): { boundary: string; body: string } {
   const boundary = 'cwm' + Math.random().toString(16).slice(2)
-  const metadata = { name: filename, mimeType: 'application/json' }
   const body =
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
     `${JSON.stringify(metadata)}\r\n` +
@@ -177,45 +238,38 @@ function multipartBody(filename: string, content: string): { boundary: string; b
   return { boundary, body }
 }
 
-/** Upload arbitrary backup JSON under `filename` (always creates a new file). */
-export async function uploadBackupToDrive(filename: string, content: string): Promise<void> {
-  const token = await getToken()
-  const { boundary, body } = multipartBody(filename, content)
-  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': `multipart/related; boundary=${boundary}`,
-    },
-    body,
-  })
-  if (!r.ok) throw new Error('Drive upload failed.')
+/** Return the existing encrypted backup's text (for pre-overwrite passphrase
+ * verification), or undefined when no backup exists yet. */
+export async function peekDriveBackupText(): Promise<string | undefined> {
+  const existing = await findDriveBackup()
+  if (!existing) return undefined
+  return downloadDriveFile(existing.id)
 }
 
-/** Flow A — back up THIS app's data to the fixed file, overwriting it in place. */
+/** Upload the encrypted backup to the private appDataFolder, overwriting the
+ * single fixed file in place. `content` MUST already be the encrypted envelope. */
 export async function backupToDrive(content: string): Promise<void> {
-  const token = await getToken()
-  const existing = (await listAppBackups()).find((f) => f.name === DRIVE_BACKUP_NAME)
-  const { boundary, body } = multipartBody(DRIVE_BACKUP_NAME, content)
+  const existing = await findDriveBackup()
+  const metadata = existing
+    ? { name: DRIVE_BACKUP_NAME }
+    : { name: DRIVE_BACKUP_NAME, parents: ['appDataFolder'] }
+  const { boundary, body } = multipartBody(metadata, content)
   const url = existing
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart`
-    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
-  const r = await fetch(url, {
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,modifiedTime`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime'
+  const r = await authedFetch(url, {
     method: existing ? 'PATCH' : 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': `multipart/related; boundary=${boundary}`,
-    },
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
     body,
   })
   if (!r.ok) throw new Error('Drive backup failed.')
 }
 
-/** Flow A — fetch the newest of THIS app's Drive backups and return its text. */
+/** Fetch THIS app's encrypted backup text from appDataFolder. Throws if none. */
 export async function restoreFromDrive(): Promise<string> {
-  const files = await listAppBackups()
-  if (files.length === 0) {
-    throw new Error('No backup found on Google Drive yet — back up first.')
+  const existing = await findDriveBackup()
+  if (!existing) {
+    throw new Error('No backup found in your Google Drive yet — back up first.')
   }
-  return downloadDriveFile(files[0].id) // listAppBackups is ordered newest-first
+  return downloadDriveFile(existing.id)
 }

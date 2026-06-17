@@ -36,7 +36,7 @@ src/lib/
   types.ts       domain types
   crypto.ts      AES-256-GCM / PBKDF2-SHA256 (200k) + decryptFlexible()  ← txn-app interop point
   sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint); throws descriptive diagnostics (names the categories/keys it saw) when "Construction" is missing or the shape is unexpected
-  backup.ts      this app's own backup / restore — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup, used by Settings → Data + Drive) AND the legacy encrypted envelope (cwm-backup-v1)
+  backup.ts      this app's own backup / restore — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup, local on-device) AND the encrypted envelope cwm-backup-v1 (buildBackupEnvelope/restoreFromText, used for Google Drive) + verifyEnvelopePassphrase() for the pre-overwrite check
   files.ts       platform-aware saveTextFile() — web Blob download / Android @capacitor/filesystem write to External `finsite-construction/`
   toast.ts       framework-agnostic toast store (toast.success/error/info + useToasts) so non-React code (drive.ts) can notify too
   repo.ts        create/update helpers, setWorkerWage, attendance block-clash guard, categoryMap CRUD
@@ -45,7 +45,7 @@ src/lib/
   autoAdvance.ts status↔date runtime: runAutoAdvance() + startDailyAutoAdvance() (load/midnight/foreground)
   native.ts      Capacitor wrappers (isNative, hardware back button, app-state)
   biometric.ts   WebAuthn (web) / Capacitor biometric (native) unlock
-  drive.ts       Google Drive — GIS token client + REST backup/restore (backupToDrive/restoreFromDrive) + Picker import; client id from settings.googleClientId (set in Settings → Data) OR VITE_GOOGLE_CLIENT_ID; setDriveClientId() syncs it at runtime
+  drive.ts       Google Drive — GIS token client → encrypted backup in the user's private appDataFolder (scope `drive.appdata`; connectDrive/backupToDrive/restoreFromDrive/peekDriveBackupText); in-memory token w/ expiry, userinfo, revoke-on-disconnect, 401-retry; client id from VITE_GOOGLE_CLIENT_ID or settings.googleClientId
   env.ts         defensive VITE_* access (Google client id / redirect)
   compute/       shifts.ts · food.ts · wage.ts · status.ts · balance.ts · profit.ts · weekly.ts (+ *.test.ts)
 src/components/  UI kit + shell (AppShell, BottomNav, BackButtonHandler, LockGate, PageHeader, FormScaffold, …)
@@ -185,19 +185,30 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 - **Hardware back button** (`native.ts` + `components/BackButtonHandler.tsx`): on Android, Back pops
   router history and exits only when already on a root tab (`/`, `/buildings`, `/workers`, `/payments`,
   `/more`).
-- **Google Drive** (`drive.ts`): enabled once a client id exists — set **per-device** in **Settings →
-  Data** (`settings.googleClientId`, applied at runtime via `setDriveClientId()`, also synced at boot in
-  `LockGate`) **or** at build time via `VITE_GOOGLE_CLIENT_ID` (`driveConfigured()`). Auth uses the **GIS
-  token client**. When configured: **Connect** authorises; the app's own plain-JSON backups
-  upload/restore via the Drive REST API (`backupToDrive()` / `restoreFromDrive()`, newest-first), and the
-  **Google Picker** imports the txn backup for sync (Settings → Data **Import finance**, and the Sync
-  screen). `lastDriveSyncAt` records the last Drive backup/restore. The offline file picker always works
-  regardless. All actions report success/failure through **toasts** — never silently.
-- **Data backup/restore** (`backup.ts` + `files.ts`): **Settings → Data** exports every Dexie table as a
-  plain-JSON `{ version, exportedAt, data }` file — web downloads a Blob, Android writes via
+- **Google Drive** (`drive.ts`): **encrypted, app-private backup** of THIS app's own data into the user's
+  own Drive. Enabled once a client id exists — `VITE_GOOGLE_CLIENT_ID` (the spec's "one shared app Client
+  ID") or an optional per-device override in **Settings → Data** (`settings.googleClientId`, applied via
+  `setDriveClientId()`, synced at boot in `LockGate`); `driveConfigured()` gates the UI. Auth is the **GIS
+  token client** with scope `openid email profile https://www.googleapis.com/auth/drive.appdata`. The token
+  is **in-memory only** (expiry tracked with a 5s skew), `connectDrive()` fetches userinfo (email shown +
+  stored as `settings.driveEmail`), `disconnectDrive()` **revokes** it, and `authedFetch()` **retries once
+  on 401** + maps the common 403s (API disabled / missing scope) to actionable messages. Backup/restore
+  prompt for a **passphrase (min 8)** and run through the **encrypted envelope** (`buildBackupEnvelope()` /
+  `restoreFromText()`), uploading the single fixed file `construction-backup.json.enc` to the hidden
+  **`appDataFolder`** (overwritten in place; `parents:['appDataFolder']`). Before overwriting, the existing
+  backup is downloaded and the passphrase **verified** (`peekDriveBackupText()` + `verifyEnvelopePassphrase()`)
+  so a typo can't lock the next restore. `appDataFolder` is **isolated per OAuth client**, so this can never
+  collide with the finance app's own app-data. **Finance import stays a manual local-file step** on the Sync
+  screen (the appData scope can't see other apps' files, so the Drive Picker was removed). On **native** the
+  GIS flow can't run in a WebView yet, so Drive shows an honest "use the web app / local backup" message;
+  `public/oauth-redirect.html` + `VITE_OAUTH_REDIRECT_URL` are staged for the future Android Custom-Tab flow.
+  All actions report success/failure through **toasts** — never silently.
+- **Data backup/restore** (`backup.ts` + `files.ts`): **Settings → Data** also exports every Dexie table as a
+  **local plain-JSON** `{ version, exportedAt, data }` file — web downloads a Blob, Android writes via
   `@capacitor/filesystem` to External `finsite-construction/` (`saveTextFile()`). Restore validates the
   shape (`validateDataBackup()` — descriptive errors, detects an encrypted envelope), then **replaces all
-  local data** behind a destructive-confirm dialog.
+  local data** behind a destructive-confirm dialog. (Local = plain-JSON for convenience; Drive = always
+  encrypted.)
 
 ## Deployment
 
@@ -209,10 +220,13 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   permission) → `npx cap sync android` (pulls in `@capacitor/app` + the biometric plugin) →
   `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags attach to a Release.
   `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager", webDir `dist`.
-- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) provide a build-time **default** Drive
-  client id; a per-device id set in **Settings → Data** overrides it. `VITE_*` ships in the client bundle
-  (Vercel "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine without them
-  (offline + per-device-Drive paths unaffected).
+- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) configure encrypted Drive backup:
+  `VITE_GOOGLE_CLIENT_ID` is the shared app Client ID (a per-device id in **Settings → Data** overrides it);
+  `VITE_OAUTH_REDIRECT_URL` points at the hosted `public/oauth-redirect.html` used only by the future
+  Android Custom-Tab flow. In Google Cloud: create one **Web** OAuth client, **enable the Drive API**, and
+  add the **`drive.appdata`** scope on the consent screen. `VITE_*` ships in the client bundle (Vercel
+  "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine without them (offline +
+  local backup paths unaffected).
 
 ## Why (deliberate decisions — don't undo)
 
@@ -235,9 +249,15 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 
 ## Known limitations & roadmap
 
-- **Google Drive is built but unverified end-to-end** — it needs a real Google client id (per-device in
-  **Settings → Data**, or `VITE_GOOGLE_CLIENT_ID`) + OAuth consent (and an API key may improve the
-  Picker). The GIS/OAuth flow couldn't be exercised in CI/headless.
+- **Google Drive (web) is built but unverified end-to-end** — encrypted backup to `appDataFolder` needs a
+  real Google client id (`VITE_GOOGLE_CLIENT_ID` or a per-device id in **Settings → Data**) + OAuth consent
+  with the `drive.appdata` scope; the GIS/OAuth flow couldn't be exercised in CI/headless.
+- **Android Drive sign-in is deferred** — GIS won't run in a WebView, so native shows an honest "use the web
+  app / local backup" message. The Chrome-Custom-Tab + deep-link flow (`public/oauth-redirect.html`,
+  `app.centering.manager://oauth-success`, `@capacitor/browser`) is staged but not wired up yet.
+- **Reading the finance app's Drive backup is out of scope by design** — it lives in *that* app's own
+  `appDataFolder` (isolated per OAuth client). Finance import stays a manual local-file step until a shared
+  Client ID or a common visible file is introduced later.
 - **Native biometric is unverified on-device** — the web WebAuthn path is testable; the APK path uses a
   Capacitor plugin that needs a real device/build to confirm.
 - `decryptFlexible()` is heuristic until validated against a **real encrypted** txn export.
