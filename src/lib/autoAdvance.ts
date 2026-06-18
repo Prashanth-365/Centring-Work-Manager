@@ -6,6 +6,7 @@ import {
   deriveBuildingDates,
   deriveMoldPaymentStatus,
   deriveMoldWorkStatus,
+  moldStartFromAttendance,
   nextBuildingStatus,
   shouldAutoClose,
 } from './compute/status'
@@ -17,19 +18,40 @@ import type { Building, Mold } from './types'
 
 /** Recompute mold work/payment status and building status + dates; persist diffs. */
 export async function runAutoAdvance(today: string = todayISO()): Promise<void> {
-  const [buildings, molds, receipts] = await Promise.all([
+  const [buildings, molds, receipts, attendance] = await Promise.all([
     db.buildings.toArray(),
     db.molds.toArray(),
     db.syncedTransactions.where('subCategory').equals('OwnerReceipt').toArray(),
+    db.attendance.toArray(),
   ])
+
+  // Earliest attendance date per mold — drives auto-start (Not Started → In
+  // Progress) for any mold that has attendance but no startDate yet.
+  const attDatesByMold = new Map<string, string[]>()
+  for (const a of attendance) {
+    if (!a.moldId) continue
+    const list = attDatesByMold.get(a.moldId)
+    if (list) list.push(a.date)
+    else attDatesByMold.set(a.moldId, [a.date])
+  }
 
   await db.transaction('rw', db.buildings, db.molds, async () => {
     // Molds first so building roll-up + auto-close see fresh statuses.
     for (const m of molds) {
       const received = receiptsForMold(m.id, receipts)
+      const patch: Partial<Mold> = {}
+
+      // Auto-start: a mold with attendance but no startDate began on its
+      // earliest attendance date. Apply it locally first so the work-status
+      // and building roll-up below reflect the start in this same pass.
+      const autoStart = moldStartFromAttendance(m, attDatesByMold.get(m.id) ?? [])
+      if (autoStart) {
+        patch.startDate = autoStart
+        m.startDate = autoStart
+      }
+
       const workStatus = deriveMoldWorkStatus(m, today)
       const paymentStatus = deriveMoldPaymentStatus(m, received)
-      const patch: Partial<Mold> = {}
       if (workStatus !== m.workStatus) patch.workStatus = workStatus
       if (paymentStatus !== m.paymentStatus) patch.paymentStatus = paymentStatus
       if (Object.keys(patch).length) {

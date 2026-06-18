@@ -6,6 +6,7 @@ import {
   deriveMoldPaymentStatus,
   deriveMoldWorkStatus,
   moldDatesForStatusChange,
+  moldStartFromAttendance,
   nextBuildingStatus,
   shouldAutoClose,
 } from './status'
@@ -78,6 +79,21 @@ describe('moldDatesForStatusChange (status → date)', () => {
         TODAY,
       ),
     ).toEqual({ startDate: undefined, completedDate: undefined, removedDate: undefined })
+  })
+})
+
+describe('moldStartFromAttendance (attendance → auto-start date)', () => {
+  it('no attendance → null', () => {
+    expect(moldStartFromAttendance({}, [])).toBeNull()
+  })
+  it('startDate already set → null (never overrides)', () => {
+    expect(moldStartFromAttendance({ startDate: '2026-01-01' }, ['2026-02-01'])).toBeNull()
+  })
+  it('returns the earliest attendance date when unset', () => {
+    expect(moldStartFromAttendance({}, ['2026-03-10', '2026-02-15', '2026-04-01'])).toBe('2026-02-15')
+  })
+  it('ignores empty/undefined dates', () => {
+    expect(moldStartFromAttendance({}, ['', '2026-05-02'])).toBe('2026-05-02')
   })
 })
 

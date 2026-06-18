@@ -67,6 +67,23 @@ export function moldDatesForStatusChange(
 }
 
 /**
+ * Attendance-driven auto-start. When a mold has attendance recorded but no
+ * `startDate` yet, work began on the EARLIEST attendance date — return it so the
+ * caller can stamp `startDate` and the mold flips Not Started → In Progress
+ * (the building roll-up + derived building start date then follow). Returns null
+ * when nothing should change (a `startDate` is already set, or no attendance).
+ */
+export function moldStartFromAttendance(
+  mold: Pick<Mold, 'startDate'>,
+  attendanceDates: readonly string[],
+): string | null {
+  if (mold.startDate) return null
+  const dates = attendanceDates.filter((d): d is string => !!d)
+  if (dates.length === 0) return null
+  return dates.reduce((earliest, d) => (d < earliest ? d : earliest))
+}
+
+/**
  * Bill + received → mold payment status (independent of work status):
  *   no billAmount → Not Billed; received 0 → Billed; received < bill → Partly
  *   Paid; received ≥ bill → Paid.

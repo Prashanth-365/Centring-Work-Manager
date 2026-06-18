@@ -146,3 +146,61 @@
   border-radius: 9999px;
   border: 3px solid hsl(var(--background));
 }
+
+/* --- Print: Weekly summary sheet ------------------------------------------
+ * Print only the summary table (the rest of the page is `print:hidden`). Use a
+ * landscape page and scale the wide register so every column fits with no
+ * horizontal cutoff. The phone-width shell + app chrome are dropped. */
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  /* Bottom nav + toast overlay never belong on paper. */
+  nav,
+  .toaster-root {
+    display: none !important;
+  }
+
+  /* Let the sheet use the full page width and avoid blank pages from the
+   * min-height / bottom padding of the app shell. */
+  main {
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+  .max-w-md {
+    max-width: none !important;
+  }
+
+  .weekly-print {
+    color: #000;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .weekly-print-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 9px;
+  }
+  .weekly-print-table th,
+  .weekly-print-table td {
+    overflow: hidden;
+    padding: 2px 3px !important;
+    border: 0.5pt solid #999 !important;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  /* Give the worker name a little more room; the rest share evenly. */
+  .weekly-print-table th:first-child,
+  .weekly-print-table td:first-child {
+    width: 13%;
+    text-align: left;
+  }
+}

@@ -280,6 +280,7 @@ export async function createAttendance(
     createdAt: ts,
     updatedAt: ts,
   } as Attendance)
+  await runAutoAdvance() // attendance can auto-start the mold (§ status engine)
   return id
 }
 
@@ -296,10 +297,12 @@ export async function updateAttendance(id: string, patch: Partial<Attendance>): 
     }
   }
   await db.attendance.update(id, { ...patch, updatedAt: now() })
+  await runAutoAdvance() // date/mold change can shift the auto-started startDate
 }
 
 export async function deleteAttendance(id: string): Promise<void> {
   await db.attendance.delete(id)
+  await runAutoAdvance() // roll up after removing an attendance line
 }
 
 // --- Other expense types ---------------------------------------------------
