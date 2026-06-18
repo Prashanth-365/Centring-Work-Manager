@@ -157,6 +157,43 @@ export async function setWorkerWage(
   })
 }
 
+/**
+ * Edit a wage entry: change its effectiveFrom and/or dailyWage. The original is
+ * removed and the new values are re-applied via withWage (so a moved date that
+ * lands on an existing one merges cleanly). Wages are looked up live per
+ * attendance date (§7), so this automatically recomputes affected attendance.
+ */
+export async function editWorkerWage(
+  id: string,
+  originalEffectiveFrom: string,
+  dailyWage: number,
+  effectiveFrom: string,
+): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  const without = {
+    ...worker,
+    wageHistory: (worker.wageHistory ?? []).filter((e) => e.effectiveFrom !== originalEffectiveFrom),
+  }
+  await db.workers.update(id, {
+    wageHistory: withWage(without, dailyWage, effectiveFrom),
+    updatedAt: now(),
+  })
+}
+
+/**
+ * Delete a wage entry by its effectiveFrom date. Wages are looked up live per
+ * attendance date (§7), so removing a rate recomputes affected attendance.
+ */
+export async function removeWorkerWage(id: string, effectiveFrom: string): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  await db.workers.update(id, {
+    wageHistory: (worker.wageHistory ?? []).filter((e) => e.effectiveFrom !== effectiveFrom),
+    updatedAt: now(),
+  })
+}
+
 export async function deleteWorker(id: string): Promise<void> {
   await db.workers.delete(id)
 }

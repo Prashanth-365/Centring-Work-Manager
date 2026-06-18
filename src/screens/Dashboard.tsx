@@ -32,12 +32,21 @@ import {
   useWorkers,
 } from '@/lib/hooks'
 import { byId, buildingName, computeBuilding, groupBy, moldOutstanding } from '@/lib/select'
-import { overhead } from '@/lib/compute/profit'
+import { buildingMargin, overhead } from '@/lib/compute/profit'
 import { workerBalance } from '@/lib/compute/balance'
 import { weeklySummary } from '@/lib/compute/weekly'
-import { daysSince, formatDate, monthRange, dateInRange, todayISO, weekKey, type WeekStart } from '@/lib/dates'
+import { PeriodSelector } from '@/components/PeriodSelector'
+import {
+  daysSince,
+  dateInPeriod,
+  periodNow,
+  todayISO,
+  weekKey,
+  type Period,
+  type WeekStart,
+} from '@/lib/dates'
 import { money, pluralize } from '@/lib/format'
-import { format, parseISO } from 'date-fns'
+import { format } from 'date-fns'
 
 export function Dashboard() {
   const buildings = useBuildings()
@@ -70,16 +79,42 @@ export function Dashboard() {
 
   const activeBuildings = buildingComputed.filter((x) => x.building.status !== 'Closed')
 
-  // Total profit after overhead (all-time)
-  const totalMargin = buildingComputed.reduce((s, x) => s + x.margin, 0)
-  const ohAll = React.useMemo(() => overhead(workers, attendance, txns, ws), [workers, attendance, txns, ws])
-  const totalProfit = totalMargin - ohAll.total
+  // Period selectors — Money and Overhead each scope their figures independently.
+  const [moneyPeriod, setMoneyPeriod] = React.useState<Period>(() => periodNow('month'))
+  const [ohPeriod, setOhPeriod] = React.useState<Period>(() => periodNow('month'))
 
-  // Overhead this month
-  const { start: mStart, end: mEnd } = monthRange(todayISO())
-  const monthAtt = React.useMemo(() => attendance.filter((a) => dateInRange(a.date, mStart, mEnd)), [attendance, mStart, mEnd])
-  const monthTxns = React.useMemo(() => txns.filter((t) => dateInRange(t.date, mStart, mEnd)), [txns, mStart, mEnd])
-  const ohMonth = React.useMemo(() => overhead(workers, monthAtt, monthTxns, ws), [workers, monthAtt, monthTxns, ws])
+  // Profit (revenue − labour − overhead) scoped to the Money period.
+  const moneyAtt = React.useMemo(
+    () => attendance.filter((a) => dateInPeriod(a.date, moneyPeriod, ws)),
+    [attendance, moneyPeriod, ws],
+  )
+  const moneyTxns = React.useMemo(
+    () => txns.filter((t) => dateInPeriod(t.date, moneyPeriod, ws)),
+    [txns, moneyPeriod, ws],
+  )
+  const periodMargin = React.useMemo(
+    () => buildings.reduce((s, b) => s + buildingMargin(b.id, moneyAtt, workersById, moneyTxns).margin, 0),
+    [buildings, moneyAtt, workersById, moneyTxns],
+  )
+  const ohMoney = React.useMemo(
+    () => overhead(workers, moneyAtt, moneyTxns, ws),
+    [workers, moneyAtt, moneyTxns, ws],
+  )
+  const totalProfit = periodMargin - ohMoney.total
+
+  // Overhead scoped to the Overhead period.
+  const ohAtt = React.useMemo(
+    () => attendance.filter((a) => dateInPeriod(a.date, ohPeriod, ws)),
+    [attendance, ohPeriod, ws],
+  )
+  const ohTxns = React.useMemo(
+    () => txns.filter((t) => dateInPeriod(t.date, ohPeriod, ws)),
+    [txns, ohPeriod, ws],
+  )
+  const ohPeriodTotals = React.useMemo(
+    () => overhead(workers, ohAtt, ohTxns, ws),
+    [workers, ohAtt, ohTxns, ws],
+  )
 
   // Receivables
   const totalReceivable = buildingComputed.reduce((s, x) => s + x.receivable, 0)
@@ -248,24 +283,34 @@ export function Dashboard() {
             {/* Money */}
             <section className="space-y-2.5">
               <SectionTitle icon={PiggyBank} title="Money" />
+              <PeriodSelector period={moneyPeriod} onChange={setMoneyPeriod} weekStartsOn={ws} />
               <div className="grid grid-cols-2 gap-2.5">
-                <Stat label="Total profit" value={<MoneyText value={totalProfit} />} icon={TrendingUp} sub="After overhead" />
-                <Stat label="Receivables" value={money(totalReceivable)} icon={HandCoins} tone={totalReceivable > 0 ? 'warning' : 'default'} sub="Owners owe you" />
-                <Stat label="Owed to workers" value={money(workerOwed.total)} icon={Wallet} tone={workerOwed.total > 0 ? 'danger' : 'default'} sub={`${workerOwed.rows.length} workers`} />
-                <Stat label="This week" value={money(week.totals.total)} icon={Banknote} sub={`Paid ${money(week.totals.paid)}`} />
+                <Link to={`/profit?type=${moneyPeriod.type}&anchor=${moneyPeriod.anchor}`} className="block transition active:scale-[0.99]">
+                  <Stat label="Total profit" value={<MoneyText value={totalProfit} />} icon={TrendingUp} sub="View breakdown" />
+                </Link>
+                <Link to="/buildings?filter=due" className="block transition active:scale-[0.99]">
+                  <Stat label="Receivables" value={money(totalReceivable)} icon={HandCoins} tone={totalReceivable > 0 ? 'warning' : 'default'} sub="Owners owe you" />
+                </Link>
+                <Link to="/workers?filter=owed" className="block transition active:scale-[0.99]">
+                  <Stat label="Owed to workers" value={money(workerOwed.total)} icon={Wallet} tone={workerOwed.total > 0 ? 'danger' : 'default'} sub={`${workerOwed.rows.length} workers`} />
+                </Link>
+                <Link to="/weekly" className="block transition active:scale-[0.99]">
+                  <Stat label="This week" value={money(week.totals.total)} icon={Banknote} sub={`Paid ${money(week.totals.paid)}`} />
+                </Link>
               </div>
             </section>
 
-            {/* Overhead this month */}
+            {/* Overhead */}
             <section className="space-y-2.5">
-              <SectionTitle icon={Banknote} title={`Overhead · ${format(new Date(), 'MMM')}`} trailing={money(ohMonth.total)} />
+              <SectionTitle icon={Banknote} title="Overhead" trailing={money(ohPeriodTotals.total)} />
+              <PeriodSelector period={ohPeriod} onChange={setOhPeriod} weekStartsOn={ws} />
               <div className="grid grid-cols-5 gap-1.5 rounded-xl border border-border bg-card p-3 text-center shadow-card">
                 {[
-                  { label: 'Food', v: ohMonth.food },
-                  { label: 'Transp', v: ohMonth.transport },
-                  { label: 'Rent', v: ohMonth.rent },
-                  { label: 'Material', v: ohMonth.material },
-                  { label: 'Other', v: ohMonth.other },
+                  { label: 'Food', v: ohPeriodTotals.food },
+                  { label: 'Transp', v: ohPeriodTotals.transport },
+                  { label: 'Rent', v: ohPeriodTotals.rent },
+                  { label: 'Material', v: ohPeriodTotals.material },
+                  { label: 'Other', v: ohPeriodTotals.other },
                 ].map((x) => (
                   <div key={x.label}>
                     <p className="tabular text-sm font-bold">{money(x.v)}</p>

@@ -15,12 +15,17 @@ const VARIANT_ICON: Record<ToastVariant, React.ComponentType<{ className?: strin
   info: Info,
 }
 
-/** Bottom-center toast stack. Mount once near the app root. */
+/**
+ * Bottom-center toast stack. Mount once near the app root.
+ *
+ * Offset above the fixed bottom nav (~4rem tall) so toast text isn't hidden
+ * behind it; the safe-area inset keeps it clear of the home indicator.
+ */
 export function Toaster() {
   const toasts = useToasts()
   if (toasts.length === 0) return null
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-center gap-2 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.5rem)] z-[100] flex flex-col items-center gap-2 px-4">
       {toasts.map((t) => {
         const Icon = VARIANT_ICON[t.variant]
         return (

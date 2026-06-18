@@ -20,6 +20,7 @@ import { AttendanceForm } from '@/screens/attendance/AttendanceForm'
 import { Payments } from '@/screens/payments/Payments'
 import { SyncScreen } from '@/screens/payments/SyncScreen'
 import { Weekly } from '@/screens/Weekly'
+import { ProfitBreakdown } from '@/screens/ProfitBreakdown'
 import { More } from '@/screens/More'
 import { Settings } from '@/screens/Settings'
 
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="/attendance/new" element={<AttendanceForm />} />
         <Route path="/attendance/:id/edit" element={<AttendanceForm />} />
         <Route path="/payments/sync" element={<SyncScreen />} />
+        <Route path="/profit" element={<ProfitBreakdown />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

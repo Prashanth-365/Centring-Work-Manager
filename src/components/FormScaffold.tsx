@@ -9,6 +9,7 @@ export function FormScaffold({
   onSubmit,
   submitting,
   submitLabel = 'Save',
+  secondaryAction,
   footerExtra,
   children,
 }: {
@@ -17,6 +18,12 @@ export function FormScaffold({
   onSubmit: (e: React.FormEvent) => void
   submitting?: boolean
   submitLabel?: string
+  /** Optional second button (e.g. "Save & add another") shown beside the primary action. */
+  secondaryAction?: {
+    label: string
+    onClick: () => void
+    submitting?: boolean
+  }
   footerExtra?: React.ReactNode
   children: React.ReactNode
 }) {
@@ -46,6 +53,18 @@ export function FormScaffold({
       <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-background/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur">
         <div className="flex gap-2">
           {footerExtra}
+          {secondaryAction && (
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              className="flex-1"
+              onClick={secondaryAction.onClick}
+              disabled={submitting || secondaryAction.submitting}
+            >
+              {secondaryAction.submitting ? 'Saving…' : secondaryAction.label}
+            </Button>
+          )}
           <Button type="submit" size="lg" className="flex-1" disabled={submitting}>
             {submitting ? 'Saving…' : submitLabel}
           </Button>

@@ -16,6 +16,7 @@ import { currentWage, wageOnDate } from '@/lib/compute/wage'
 import { byId, buildingName } from '@/lib/select'
 import { todayISO } from '@/lib/dates'
 import { days, money } from '@/lib/format'
+import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 const PRESETS: { label: string; blocks: number[] }[] = [
@@ -108,11 +109,19 @@ export function AttendanceForm() {
         ? (worker.foodPerDay ?? 0) * dayFractionFromBlocks(unionBlocks)
         : undefined
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!workerId) return setError('Pick a worker')
-    if (!buildingId) return setError('Pick a building')
-    if (blocks.length === 0) return setError('Select at least one shift block')
+  async function save(addAnother: boolean): Promise<boolean> {
+    if (!workerId) {
+      setError('Pick a worker')
+      return false
+    }
+    if (!buildingId) {
+      setError('Pick a building')
+      return false
+    }
+    if (blocks.length === 0) {
+      setError('Select at least one shift block')
+      return false
+    }
     setError('')
     setSaving(true)
     const data = {
@@ -132,9 +141,26 @@ export function AttendanceForm() {
     } catch (err) {
       setSaving(false)
       setError(err instanceof Error ? err.message : 'Could not save')
-      return
+      return false
     }
-    navigate(-1)
+    setSaving(false)
+    if (addAnother) {
+      // Keep building, floor/mold and date; clear only the worker + shift blocks
+      // (and the optional times/notes) so the next entry is quick to add.
+      toast.success(`Saved ${worker?.name ?? 'entry'} · ${days(dayFractionFromBlocks(blocks))}`)
+      setWorkerId(undefined)
+      setBlocks([])
+      setFrom('')
+      setTo('')
+      setNotes('')
+    }
+    return true
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const ok = await save(false)
+    if (ok) navigate(-1)
   }
 
   return (
@@ -143,6 +169,9 @@ export function AttendanceForm() {
       onSubmit={submit}
       submitting={saving}
       submitLabel={editing ? 'Save' : 'Add'}
+      secondaryAction={
+        editing ? undefined : { label: 'Save & add another', onClick: () => void save(true) }
+      }
       footerExtra={
         editing ? (
           <Button type="button" variant="outline" size="lg" onClick={() => setConfirmDel(true)}>

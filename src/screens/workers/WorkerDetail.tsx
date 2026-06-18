@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ClipboardList, Pencil, Phone, Wallet } from 'lucide-react'
+import { ClipboardList, Pencil, Phone, UtensilsCrossed, Wallet } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Thumb } from '@/components/Thumb'
 import { Stat } from '@/components/Stat'
@@ -20,6 +20,7 @@ import {
 } from '@/lib/hooks'
 import { workerBalance } from '@/lib/compute/balance'
 import { currentWage, wageOnDate } from '@/lib/compute/wage'
+import { dailyFoodBreakdown, type FoodEntry } from '@/lib/compute/food'
 import { BALANCE_SUBCATS } from '@/lib/constants'
 import { byId, buildingName } from '@/lib/select'
 import { formatDate } from '@/lib/dates'
@@ -49,6 +50,15 @@ export function WorkerDetail() {
   const ws = (settings.weekStartsOn ?? 1) as WeekStart
   const bal = workerBalance(worker, attendance, txns, ws)
   const payTxns = [...txns].sort((a, b) => (a.date < b.date ? 1 : -1))
+
+  // Computed daily food per day (display-only — never a transaction, no
+  // double-count). Shown as a single line at the end of each day's lines.
+  const foodByDate = new Map<string, number>()
+  for (const f of dailyFoodBreakdown(worker, attendance as FoodEntry[])) {
+    foodByDate.set(f.date, f.foodAmount)
+  }
+  // Attendance rows interleaved with a food line whenever the date changes.
+  const sortedAttendance = [...attendance].sort((a, b) => (a.date < b.date ? 1 : -1))
 
   return (
     <>
@@ -112,29 +122,42 @@ export function WorkerDetail() {
               <EmptyState icon={ClipboardList} title="No attendance" />
             ) : (
               <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-                {attendance.map((a) => {
+                {sortedAttendance.map((a, i) => {
                   const b = buildingsById.get(a.buildingId)
                   const m = a.moldId ? moldsById.get(a.moldId) : undefined
+                  // Last line for this date? (rows are sorted newest-first, grouped by date)
+                  const isDayEnd = sortedAttendance[i + 1]?.date !== a.date
+                  const food = foodByDate.get(a.date) ?? 0
                   return (
-                    <Link
-                      key={a.id}
-                      to={`/attendance/${a.id}/edit`}
-                      className="flex items-center justify-between gap-2 px-3.5 py-2.5 transition active:bg-accent"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {buildingName(b, ownersById)}
-                          {m ? ` · ${m.floorName}` : ''}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{formatDate(a.date)}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="tabular text-sm font-semibold">{days(a.dayFraction)} day</p>
-                        <p className="tabular text-xs text-muted-foreground">
-                          {money(a.dayFraction * wageOnDate(worker, a.date))}
-                        </p>
-                      </div>
-                    </Link>
+                    <React.Fragment key={a.id}>
+                      <Link
+                        to={`/attendance/${a.id}/edit`}
+                        className="flex items-center justify-between gap-2 px-3.5 py-2.5 transition active:bg-accent"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {buildingName(b, ownersById)}
+                            {m ? ` · ${m.floorName}` : ''}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{formatDate(a.date)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="tabular text-sm font-semibold">{days(a.dayFraction)} day</p>
+                          <p className="tabular text-xs text-muted-foreground">
+                            {money(a.dayFraction * wageOnDate(worker, a.date))}
+                          </p>
+                        </div>
+                      </Link>
+                      {isDayEnd && food > 0 && (
+                        <div className="flex items-center justify-between gap-2 bg-muted/40 px-3.5 py-1.5">
+                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <UtensilsCrossed className="size-3.5" />
+                            Food — {formatDate(a.date)}
+                          </span>
+                          <span className="tabular text-xs font-medium text-muted-foreground">{money(food)}</span>
+                        </div>
+                      )}
+                    </React.Fragment>
                   )
                 })}
               </div>

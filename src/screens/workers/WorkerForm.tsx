@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Trash2 } from 'lucide-react'
+import { Check, Pencil, Trash2, X } from 'lucide-react'
 import { FormScaffold } from '@/components/FormScaffold'
 import { PhotoPicker } from '@/components/PhotoPicker'
 import { Field } from '@/components/Field'
@@ -17,11 +17,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSettings, useWorker } from '@/lib/hooks'
-import { createWorker, deleteWorker, setWorkerWage, updateWorker } from '@/lib/repo'
+import {
+  createWorker,
+  deleteWorker,
+  editWorkerWage,
+  removeWorkerWage,
+  setWorkerWage,
+  updateWorker,
+} from '@/lib/repo'
 import { currentWage } from '@/lib/compute/wage'
 import { FOOD_MODES, WORKER_TYPES } from '@/lib/constants'
 import { formatDate, todayISO } from '@/lib/dates'
 import { money } from '@/lib/format'
+import { toast } from '@/lib/toast'
 import type { FoodMode, WorkerType } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +57,11 @@ export function WorkerForm() {
   const [error, setError] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   const [confirmDel, setConfirmDel] = React.useState(false)
+  // Inline wage-history editing (edit existing entry by its original date).
+  const [editEntry, setEditEntry] = React.useState<string | null>(null)
+  const [editWage, setEditWage] = React.useState('')
+  const [editDate, setEditDate] = React.useState('')
+  const [delEntry, setDelEntry] = React.useState<string | null>(null)
   const loaded = React.useRef(false)
   const seeded = React.useRef(false)
 
@@ -122,6 +135,31 @@ export function WorkerForm() {
       })
       navigate(`/workers/${newId}`, { replace: true })
     }
+  }
+
+  function startEditWage(effectiveFrom: string, dailyWage: number) {
+    setEditEntry(effectiveFrom)
+    setEditWage(String(dailyWage))
+    setEditDate(effectiveFrom)
+  }
+
+  async function saveEditWage() {
+    if (!id || editEntry == null) return
+    const amount = Number(editWage)
+    if (!editDate || !Number.isFinite(amount) || amount <= 0) {
+      toast.error('Enter a valid wage and date')
+      return
+    }
+    await editWorkerWage(id, editEntry, amount, editDate)
+    toast.success('Wage updated — affected attendance recomputed')
+    setEditEntry(null)
+  }
+
+  async function deleteWage(effectiveFrom: string) {
+    if (!id) return
+    await removeWorkerWage(id, effectiveFrom)
+    toast.success('Wage removed — affected attendance recomputed')
+    setDelEntry(null)
   }
 
   return (
@@ -198,16 +236,66 @@ export function WorkerForm() {
           </Field>
         </div>
         {editing && existing && existing.wageHistory.length > 0 && (
-          <div className="space-y-1 border-t border-border pt-2">
-            <p className="text-xs font-medium text-muted-foreground">Rate history</p>
+          <div className="space-y-1.5 border-t border-border pt-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Rate history · current {money(currentWage(existing))}/day
+            </p>
             {[...existing.wageHistory]
               .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))
-              .map((w) => (
-                <div key={w.effectiveFrom} className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">from {formatDate(w.effectiveFrom)}</span>
-                  <span className="font-medium">{money(w.dailyWage)}/day</span>
-                </div>
-              ))}
+              .map((w) =>
+                editEntry === w.effectiveFrom ? (
+                  <div key={w.effectiveFrom} className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={editWage}
+                      onChange={(e) => setEditWage(e.target.value)}
+                      className="h-9 flex-1"
+                      placeholder="₹"
+                    />
+                    <Input
+                      type="date"
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="h-9 flex-1"
+                    />
+                    <Button type="button" size="icon" variant="success" onClick={saveEditWage} aria-label="Save rate">
+                      <Check className="size-4" />
+                    </Button>
+                    <Button type="button" size="icon" variant="ghost" onClick={() => setEditEntry(null)} aria-label="Cancel">
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div key={w.effectiveFrom} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">from {formatDate(w.effectiveFrom)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-medium">{money(w.dailyWage)}/day</span>
+                      <button
+                        type="button"
+                        onClick={() => startEditWage(w.effectiveFrom, w.dailyWage)}
+                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                        aria-label="Edit rate"
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDelEntry(w.effectiveFrom)}
+                        disabled={existing.wageHistory.length <= 1}
+                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
+                        aria-label="Delete rate"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ),
+              )}
+            <p className="pt-0.5 text-[11px] text-muted-foreground">
+              To add a rate, set Amount + Effective from above and save. Editing or deleting a rate recomputes
+              wages on affected attendance.
+            </p>
           </div>
         )}
       </div>
@@ -287,6 +375,14 @@ export function WorkerForm() {
           await deleteWorker(id!)
           navigate('/workers', { replace: true })
         }}
+      />
+
+      <ConfirmDialog
+        open={delEntry != null}
+        onOpenChange={(o) => !o && setDelEntry(null)}
+        title="Delete this wage rate?"
+        description="Attendance dated within this rate's period will be recosted using the previous effective rate."
+        onConfirm={() => delEntry && deleteWage(delEntry)}
       />
     </FormScaffold>
   )
