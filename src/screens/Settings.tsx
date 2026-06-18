@@ -52,7 +52,6 @@ import {
   isDriveConnected,
   peekDriveBackupText,
   restoreFromDrive,
-  setDriveClientId,
 } from '@/lib/drive'
 import { toast } from '@/lib/toast'
 import { CategoryMapping } from '@/screens/settings/CategoryMapping'
@@ -374,7 +373,6 @@ function DataSection({ settings }: { settings: SettingsType }) {
   const restoreRef = React.useRef<HTMLInputElement>(null)
   const [busy, setBusy] = React.useState('')
   const [confirmFile, setConfirmFile] = React.useState<File>()
-  const [clientId, setClientId] = React.useState(settings.googleClientId ?? '')
   const [connected, setConnected] = React.useState(isDriveConnected())
   const [email, setEmail] = React.useState(getDriveUser()?.email ?? settings.driveEmail ?? '')
   const [driveAction, setDriveAction] = React.useState<'backup' | 'restore'>()
@@ -416,13 +414,6 @@ function DataSection({ settings }: { settings: SettingsType }) {
   }
 
   // --- Google Drive (encrypted backup in the user's private appDataFolder) ---
-  async function saveClientId() {
-    const trimmed = clientId.trim()
-    await updateSettings({ googleClientId: trimmed })
-    setDriveClientId(trimmed)
-    toast.success(trimmed ? 'Google client id saved.' : 'Google client id cleared.')
-  }
-
   async function connect() {
     await withBusy('connect', async () => {
       const user = await connectDrive()
@@ -541,23 +532,14 @@ function DataSection({ settings }: { settings: SettingsType }) {
           it; no one else — not even the developer — can read it.
         </p>
 
-        <Field label="OAuth Web client id" hint="From your Google Cloud project (or set VITE_GOOGLE_CLIENT_ID)">
-          {(id) => (
-            <div className="flex gap-2">
-              <Input
-                id={id}
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                placeholder="xxxx.apps.googleusercontent.com"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <Button variant="secondary" onClick={saveClientId}>
-                Save
-              </Button>
-            </div>
-          )}
-        </Field>
+        {!driveOn && (
+          <p className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
+            Google Drive isn’t configured in this build. Set{' '}
+            <span className="font-medium text-foreground">VITE_GOOGLE_CLIENT_ID</span> and{' '}
+            <span className="font-medium text-foreground">VITE_OAUTH_REDIRECT_URL</span> in the
+            deployment, then reinstall this build.
+          </p>
+        )}
 
         {driveOn ? (
           <>

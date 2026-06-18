@@ -196,8 +196,9 @@ export interface Settings {
   collectAlertDays: number // default 18
   weekStartsOn: number // 1 = Monday
   appLock: AppLockConfig
-  /** OAuth 2.0 Web client id for Google Drive (GIS). Optional — falls back to
-   * the VITE_GOOGLE_CLIENT_ID build env. When neither is set, Drive is hidden. */
+  /** @deprecated No longer used — the Drive OAuth client id now comes solely
+   * from the VITE_GOOGLE_CLIENT_ID build env (no in-app field). Kept on the type
+   * so existing stored settings rows still parse. */
   googleClientId?: string
   /** Email of the Google account last connected for Drive backup (status display). */
   driveEmail?: string

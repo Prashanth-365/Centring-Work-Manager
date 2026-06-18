@@ -4,9 +4,9 @@
 //
 // Architecture (see BUILD_PROMPTS.md):
 //   - One shared app Client ID identifies the APP, not the user. It comes from
-//     `VITE_GOOGLE_CLIENT_ID` (or, for the owner-operator's convenience, an
-//     optional per-device override via `setDriveClientId`). No client secret —
-//     the public client id is safe to ship.
+//     `VITE_GOOGLE_CLIENT_ID`, inlined at build time for both the web deploy and
+//     the Android APK CI. No client secret — the public client id is safe to
+//     ship, and there is no in-app field to enter it.
 //   - Each user signs in with their OWN Google account and the backup is stored
 //     in Drive's hidden, app-private `appDataFolder` IN THEIR OWN DRIVE. The app
 //     can only see files IT created; the developer can never read user data.
@@ -49,21 +49,11 @@ declare global {
   }
 }
 
-// Runtime client id (optional per-device override); falls back to the build env.
-let runtimeClientId = ''
-
-/** Set the OAuth client id from Settings. Call on app boot + when it changes. */
-export function setDriveClientId(id: string | undefined): void {
-  const next = (id ?? '').trim()
-  if (next !== runtimeClientId) {
-    runtimeClientId = next
-    accessToken = undefined // a new client id invalidates any existing token
-    tokenExpiresAt = 0
-  }
-}
-
+// The OAuth client id identifies the APP and ships with the build via
+// `VITE_GOOGLE_CLIENT_ID` (injected at build time for both the web deploy and
+// the Android APK CI). There is no in-app field — users never enter it.
 function effectiveClientId(): string {
-  return runtimeClientId || GOOGLE_CLIENT_ID
+  return GOOGLE_CLIENT_ID
 }
 
 export function driveConfigured(): boolean {
