@@ -25,6 +25,7 @@ import {
   useAllAttendance,
   useAllMolds,
   useBuildings,
+  useOtherExpenseTypes,
   useOwners,
   useReviewCount,
   useSettings,
@@ -34,18 +35,30 @@ import {
 import { byId, buildingName, computeBuilding, groupBy, moldOutstanding } from '@/lib/select'
 import { buildingMargin, overhead } from '@/lib/compute/profit'
 import { workerBalance } from '@/lib/compute/balance'
+import { foodForEntries } from '@/lib/compute/food'
 import { weeklySummary } from '@/lib/compute/weekly'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   daysSince,
   dateInPeriod,
+  periodLabel,
   periodNow,
+  periodRange,
+  toISODate,
   todayISO,
   weekKey,
   type Period,
   type WeekStart,
 } from '@/lib/dates'
 import { money, pluralize } from '@/lib/format'
+import type { Worker } from '@/lib/types'
 import { format } from 'date-fns'
 
 export function Dashboard() {
@@ -56,7 +69,10 @@ export function Dashboard() {
   const workers = useWorkers()
   const txns = useTransactions()
   const settings = useSettings()
+  const otherTypes = useOtherExpenseTypes()
   const reviewCount = useReviewCount()
+
+  const [foodOpen, setFoodOpen] = React.useState(false)
 
   const ws = (settings.weekStartsOn ?? 1) as WeekStart
   const threshold = settings.collectAlertDays ?? 18
@@ -115,6 +131,44 @@ export function Dashboard() {
     () => overhead(workers, ohAtt, ohTxns, ws),
     [workers, ohAtt, ohTxns, ws],
   )
+
+  // Break OtherExpense down by type so each shows as its own clickable line.
+  const ohOther = React.useMemo(() => {
+    const known = new Set(otherTypes.map((t) => t.name))
+    const byType = new Map<string, number>()
+    let rest = 0
+    for (const t of ohTxns) {
+      if (t.subCategory !== 'OtherExpense') continue
+      const name = t.otherExpenseType ?? ''
+      if (name && known.has(name)) byType.set(name, (byType.get(name) ?? 0) + t.amount)
+      else rest += t.amount
+    }
+    return { byType: [...byType.entries()], rest }
+  }, [ohTxns, otherTypes])
+
+  // Clickable overhead line items. Transaction-backed lines deep-link to the
+  // assigned-payments list filtered by that category AND the overhead period;
+  // Food is a calculated figure, so it opens a per-worker breakdown instead.
+  const ohRange = React.useMemo(() => periodRange(ohPeriod, ws), [ohPeriod, ws])
+  const ohQuery = (cat: string) =>
+    `tab=assigned&cat=${encodeURIComponent(cat)}&from=${toISODate(ohRange.start)}&to=${toISODate(ohRange.end)}`
+  const overheadLines: { key: string; label: string; amount: number; food?: boolean }[] = [
+    { key: 'food', label: 'Food', amount: ohPeriodTotals.food, food: true },
+    { key: 'Transport', label: 'Transport', amount: ohPeriodTotals.transport },
+    { key: 'Rent', label: 'Rent', amount: ohPeriodTotals.rent },
+    { key: 'Material', label: 'Material', amount: ohPeriodTotals.material },
+    ...ohOther.byType.map(([name, amt]) => ({ key: `other:${name}`, label: name, amount: amt })),
+    ...(Math.abs(ohOther.rest) > 0.5 ? [{ key: 'other:__rest__', label: 'Other', amount: ohOther.rest }] : []),
+  ]
+
+  // Per-worker calculated food for the breakdown dialog (sums to overhead food).
+  const foodRows = React.useMemo(() => {
+    const byWorker = groupBy(ohAtt, (a) => a.workerId)
+    return workers
+      .map((w) => ({ w, food: foodForEntries(w, byWorker.get(w.id) ?? [], ws) }))
+      .filter((r) => r.food > 0.5)
+      .sort((a, b) => b.food - a.food)
+  }, [ohAtt, workers, ws])
 
   // Receivables
   const totalReceivable = buildingComputed.reduce((s, x) => s + x.receivable, 0)
@@ -280,6 +334,8 @@ export function Dashboard() {
               </section>
             )}
 
+            {/* Analytical sections — two columns on wide screens. */}
+            <div className="grid gap-5 xl:grid-cols-2 xl:items-start">
             {/* Money */}
             <section className="space-y-2.5">
               <SectionTitle icon={PiggyBank} title="Money" />
@@ -304,19 +360,42 @@ export function Dashboard() {
             <section className="space-y-2.5">
               <SectionTitle icon={Banknote} title="Overhead" trailing={money(ohPeriodTotals.total)} />
               <PeriodSelector period={ohPeriod} onChange={setOhPeriod} weekStartsOn={ws} />
-              <div className="grid grid-cols-5 gap-1.5 rounded-xl border border-border bg-card p-3 text-center shadow-card">
-                {[
-                  { label: 'Food', v: ohPeriodTotals.food },
-                  { label: 'Transp', v: ohPeriodTotals.transport },
-                  { label: 'Rent', v: ohPeriodTotals.rent },
-                  { label: 'Material', v: ohPeriodTotals.material },
-                  { label: 'Other', v: ohPeriodTotals.other },
-                ].map((x) => (
-                  <div key={x.label}>
-                    <p className="tabular text-sm font-bold">{money(x.v)}</p>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{x.label}</p>
-                  </div>
-                ))}
+              <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card shadow-card">
+                {overheadLines.map((line) =>
+                  line.food ? (
+                    <button
+                      key={line.key}
+                      type="button"
+                      onClick={() => setFoodOpen(true)}
+                      className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition active:bg-accent"
+                    >
+                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        {line.label}
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium">calculated</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="tabular text-sm font-medium">{money(line.amount)}</span>
+                        <ChevronRight className="size-4 text-muted-foreground" />
+                      </span>
+                    </button>
+                  ) : (
+                    <Link
+                      key={line.key}
+                      to={`/payments?${ohQuery(line.key)}`}
+                      className="flex items-center justify-between gap-2 px-3.5 py-2.5 transition active:bg-accent"
+                    >
+                      <span className="text-sm text-muted-foreground">{line.label}</span>
+                      <span className="flex items-center gap-1">
+                        <span className="tabular text-sm font-medium">{money(line.amount)}</span>
+                        <ChevronRight className="size-4 text-muted-foreground" />
+                      </span>
+                    </Link>
+                  ),
+                )}
+                <div className="flex items-center justify-between gap-2 bg-muted/40 px-3.5 py-2.5 font-semibold">
+                  <span className="text-sm">Total overhead</span>
+                  <span className="tabular text-sm">{money(ohPeriodTotals.total)}</span>
+                </div>
               </div>
             </section>
 
@@ -368,6 +447,15 @@ export function Dashboard() {
                 </div>
               </section>
             )}
+            </div>
+
+            <FoodBreakdownDialog
+              open={foodOpen}
+              onOpenChange={setFoodOpen}
+              rows={foodRows}
+              total={ohPeriodTotals.food}
+              periodText={periodLabel(ohPeriod, ws)}
+            />
           </>
         )}
       </div>
@@ -402,4 +490,49 @@ function SectionTitle({
     </div>
   )
   return to ? <Link to={to}>{inner}</Link> : inner
+}
+
+/** Per-worker calculated-food breakdown for the selected overhead period. Food
+ * is a calculated cost (not a transaction), so it opens here instead of the
+ * assigned-payments list. */
+function FoodBreakdownDialog({
+  open,
+  onOpenChange,
+  rows,
+  total,
+  periodText,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  rows: { w: Worker; food: number }[]
+  total: number
+  periodText: string
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Food breakdown</DialogTitle>
+          <DialogDescription>Calculated food per worker · {periodText}</DialogDescription>
+        </DialogHeader>
+        {rows.length === 0 ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">No food calculated in this period.</p>
+        ) : (
+          <div className="max-h-[60vh] divide-y divide-border overflow-y-auto rounded-xl border border-border">
+            {rows.map(({ w, food }) => (
+              <div key={w.id} className="flex items-center gap-3 px-3 py-2.5">
+                <Thumb blob={w.photoThumb} name={w.name} className="size-8 text-xs" />
+                <p className="min-w-0 flex-1 truncate text-sm font-medium">{w.name}</p>
+                <span className="tabular text-sm font-semibold">{money(food)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2.5 font-semibold">
+              <span className="text-sm">Total food</span>
+              <span className="tabular text-sm">{money(total)}</span>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }

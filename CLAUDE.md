@@ -36,21 +36,28 @@ src/lib/
   types.ts       domain types
   crypto.ts      AES-256-GCM / PBKDF2-SHA256 (200k) + decryptFlexible()  ← txn-app interop point
   sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint); throws descriptive diagnostics (names the categories/keys it saw) when "Construction" is missing or the shape is unexpected
-  backup.ts      this app's own backup / restore — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup, local on-device) AND the encrypted envelope cwm-backup-v1 (buildBackupEnvelope/restoreFromText, used for Google Drive) + verifyEnvelopePassphrase() for the pre-overwrite check
-  files.ts       platform-aware saveTextFile() — web Blob download / Android @capacitor/filesystem write to External `finsite-construction/`
-  toast.ts       framework-agnostic toast store (toast.success/error/info + useToasts) so non-React code (drive.ts) can notify too
+  backup.ts      this app's own data — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup) AND the encrypted envelope cwm-backup-v1 (buildBackupEnvelope/restoreFromText). Used by both Export/Import (Settings → Data, plain or encrypted per the toggle) and Google Drive (always encrypted) + verifyEnvelopePassphrase() for the pre-overwrite check
+  files.ts       platform-aware saveToDownloads()/saveBinaryToDownloads() — web Blob download / Android @capacitor/filesystem write to the public Downloads (Directory.ExternalStorage `Download/`, falling back to app-External when scoped storage blocks it) + downloadStamp() (YYYYMMDD-HHmmss filenames)
+  weeklyPdf.ts   native weekly-summary print — lazy jspdf + jspdf-autotable render the selected week to a LANDSCAPE PDF, saved to Downloads and handed to @capacitor/share (the Android print/share intent). Web keeps window.print(); this module is only imported on native so jspdf never enters the web bundle (workbox globIgnores keep the PDF libs out of the web PWA precache)
+  toast.ts       framework-agnostic toast store (toast.success/error/info + useToasts) so non-React code (drive.ts) can notify too. Every variant uses an OPAQUE (bg-card) background so messages stay legible over scrolled content
   repo.ts        create/update helpers, setWorkerWage, attendance block-clash guard, categoryMap CRUD
   hooks.ts       Dexie useLiveQuery hooks
   select.ts      shared selectors (byId, groupBy, buildingName, computeBuilding, currentMold)
-  autoAdvance.ts status↔date runtime: runAutoAdvance() + startDailyAutoAdvance() (load/midnight/foreground)
-  native.ts      Capacitor wrappers (isNative, hardware back button, app-state)
+  autoAdvance.ts status↔date runtime: runAutoAdvance() + startDailyAutoAdvance() (load/midnight/foreground); also auto-starts a mold from its earliest attendance date
+  native.ts      Capacitor wrappers (isNative, hardware back button, app-state, best-effort landscape orientation lock)
   biometric.ts   WebAuthn (web) / Capacitor biometric (native) unlock
   drive.ts       Google Drive — GIS token client → encrypted backup in the user's private appDataFolder (scope `drive.appdata`; connectDrive/backupToDrive/restoreFromDrive/peekDriveBackupText); in-memory token w/ expiry, userinfo, revoke-on-disconnect, 401-retry; client id from VITE_GOOGLE_CLIENT_ID or settings.googleClientId
   env.ts         defensive VITE_* access (Google client id / redirect)
   compute/       shifts.ts · food.ts · wage.ts · status.ts · balance.ts · profit.ts · weekly.ts (+ *.test.ts)
-src/components/  UI kit + shell (AppShell, BottomNav, BackButtonHandler, LockGate, PageHeader, FormScaffold, …)
+src/components/  UI kit + shell (AppShell, BottomNav, SideNav, BackButtonHandler, LockGate, PageHeader, FormScaffold, PeriodSelector + PeriodPicker, …)
 src/screens/     Dashboard, buildings/, molds/, workers/, owners/, attendance/, payments/, settings/, Weekly, More, Settings
 ```
+
+**Responsive shell (`AppShell` + `SideNav` + `BottomNav`):** mobile-first single `max-w-md` column with the
+bottom tab bar below `md`; at `md+` the bottom bar is hidden and a left **SideNav** (Home/Buildings/Workers/
+Owners/Attendance/Payments/Weekly/Settings) appears, with content constrained to `max-w-4xl` and the
+Dashboard's analytical sections flowing into two columns (`xl:grid-cols-2`). `SideNav` is a `<nav>` so the
+print stylesheet (which hides `nav`) drops it on paper.
 
 ## Data model (Dexie, all keyed on UUID `id`)
 
@@ -74,6 +81,7 @@ src/screens/     Dashboard, buildings/, molds/, workers/, owners/, attendance/, 
 - **categoryMap** — `id, sourceName, type` (txn sub-category NAME → our `SubCategory`)
 - **otherExpenseTypes** — `id, name` (seeded `FinanceCost`, `Theft`)
 - **settings** (single row `id:'app'`) — shift blocks, default food, `collectAlertDays`, `weekStartsOn`,
+  `encryptBackup?` (default true — controls Export/Import encryption; Drive is always encrypted),
   `appLock { enabled, method('pin'|'biometric'), pinHash?, salt?, webauthnCredId?, relockMinutes? }`
 
 > **No `dailyFood` table.** Food is day-wise but **computed live** (group attendance by worker+date,
@@ -127,7 +135,23 @@ greatest `effectiveFrom ≤ date` (fallback: earliest rate). Editing a wage **ap
 
 `compute/weekly.ts` builds the payroll register: per worker per Mon–Sun day-fractions, totals, wage
 (per-day at the effective rate, with a `wageChangedMidWeek` flag), food, paid (txns dated that week),
-current, previous balance (cumulative before the week), final balance.
+current, previous balance (cumulative before the week), final balance. **`screens/Weekly.tsx`** renders
+this wide table with week prev/next. **Only workers with attendance that week (`totalDays > 0`) are
+listed**; a "Show all active workers" toggle reveals everyone (incl. zero-day workers carrying a
+balance), and the stat cards + table footer foot to the *displayed* rows (`sumRows`). It also has a
+**Maximize** button (full-screen, landscape-optimized overlay that best-effort-locks the device to
+landscape via `native.ts`, stays horizontally scrollable, and supports **pinch- and button-zoom** via the
+CSS `zoom` property — pinch uses non-passive touch listeners so it doesn't fight page zoom) and a
+**Print** button. **Print is platform-aware:** on **web** it's `window.print()` (the `@media print`
+sheet in `index.css` — `@page { size: landscape }`, app chrome hidden, a `table-layout: fixed`
+`.weekly-print-table` scaled so every column fits); on **native** the WebView can't open the system
+print dialog, so `lib/weeklyPdf.ts` renders the selected week to a landscape PDF (jspdf + jspdf-autotable)
+and hands it to the Android share/print intent (`@capacitor/share`), saving it to Downloads as a fallback.
+
+**Period selector (`components/PeriodSelector` + `PeriodPicker`):** a Week / Month / Year selector with
+prev/next steps; tapping the label opens a picker (calendar week-picker, month grid, or decade year
+grid, defaulting to the current period). Used by the Dashboard money/overhead sections and the profit
+breakdown; the chosen `Period` (`compute`/`dates.ts` helpers) scopes those figures.
 
 ## Status ↔ date engine (`compute/status.ts` + `autoAdvance.ts`, §4)
 
@@ -143,6 +167,12 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   (`startDailyAutoAdvance`, mounted in `LockGate`), recompute and persist any changed status. A
   building **auto-Closes** when Completed AND every mold is Paid (`shouldAutoClose`). Forms call
   `runAutoAdvance()` after save so payment/work status reconcile immediately.
+- **Attendance auto-starts a mold (§4):** a mold that is Not Started but has attendance recorded
+  began on its **earliest attendance date** — `runAutoAdvance` stamps that `startDate`
+  (`moldStartFromAttendance` in `status.ts`, never overriding an existing one), which flips the mold
+  to In Progress and cascades the building roll-up + derived building `startDate` (min mold start) in
+  the same pass. `repo.ts` attendance create/update/delete therefore call `runAutoAdvance()`, so
+  logging work on an all-Not-Started building moves it to In Progress automatically.
 
 ## Transaction integration convention
 
@@ -160,6 +190,13 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 - **Review queue** = `unassigned` + `needsReview`. Assignment fields are chosen **by subCategory**
   (`SUBCATEGORY_FIELDS`): OwnerReceipt→building(+mold); Wage/Advance/Food/Transport/Rent→worker;
   Material→free-text; OtherExpense→type (add-new). All entity pickers are autocomplete `Combobox`es.
+- **Assigned tab filters** (`screens/payments/Payments.tsx`): a **date-range** filter + a **multi-select
+  category** filter — the 7 base sub-categories plus one chip per OtherExpense type (FinanceCost, Theft, …)
+  plus a catch-all **Other** (uncategorised OtherExpense). Category keys (`Transport`, `other:FinanceCost`,
+  `other:__rest__`, …) double as deep-link params: the screen accepts `?tab=assigned&cat=<key>&from=&to=`,
+  used by the Dashboard overhead lines.
+- **Attendance list filters** (`screens/attendance/AttendanceList.tsx`): main row = worker + building +
+  date range; **Advanced** = mold/floor (scoped to the chosen building) — same pattern as Buildings/Workers.
 - **⚠️ The one crypto interop point:** `crypto.ts → decryptFlexible()`. Built without a real sample
   export — if a real encrypted file fails, adjust `CRYPTO_FIELD_NAMES` / `PACKED_LAYOUT`. Field-name
   detection for the JSON shape lives in `sync.ts` (`*_KEYS`).
@@ -173,7 +210,13 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   current mold + statuses, running margin, "unpaid ₹X" badge), a **Go-collect** list (Done/Removed &
   not Paid past `collectAlertDays`, default 18, with aging), and a "transactions to assign: N" nudge —
   then the **money** section: total profit after overhead, receivables, money owed to workers, this
-  week's wages, overhead this month, profit by building. Closed buildings are hidden from the top.
+  week's wages, overhead, profit by building. Closed buildings are hidden from the top. The **overhead**
+  block is a **clickable list**: transaction-backed lines (Transport / Rent / Material + one line per
+  OtherExpense type — FinanceCost / Theft / … — + a catch-all "Other") deep-link to the Assigned-Payments
+  list filtered by that category **and** the overhead period's date range; the **Food** line is a
+  *calculated* figure (not a transaction) so it opens a per-worker food breakdown dialog for the period
+  instead (`FoodBreakdownDialog`). On wide screens the money/overhead/profit/you-owe sections lay out in
+  two columns.
 
 ## App lock, biometrics & Google Drive
 
@@ -182,9 +225,12 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   `appLock.webauthnCredId`; ceremony success = unlock, no server), a **Capacitor biometric plugin**
   on the APK (lazy-loaded). The app **re-locks** after being backgrounded longer than `relockMinutes`
   (default 2) via `visibilitychange` + native `appStateChange`.
-- **Hardware back button** (`native.ts` + `components/BackButtonHandler.tsx`): on Android, Back pops
-  router history and exits only when already on a root tab (`/`, `/buildings`, `/workers`, `/payments`,
-  `/more`).
+- **Hardware back button** (`native.ts` + `components/BackButtonHandler.tsx`): Back **always funnels to
+  Home and only ever exits from Home**. On a nested/detail page it pops router history; on a top-level
+  tab other than Home (`/buildings`, `/workers`, `/payments`, `/more`) or when history is exhausted it
+  redirects to `/`; on Home the first Back shows a "Press back again to exit" toast and a second Back
+  within ~2s calls `exitApp()` (Android). In-app history depth is read from `history.state.idx` (React
+  Router v6) for reliable WebView detection.
 - **Google Drive** (`drive.ts`): **encrypted, app-private backup** of THIS app's own data into the user's
   own Drive. Enabled once a client id exists — `VITE_GOOGLE_CLIENT_ID` (the spec's "one shared app Client
   ID") or an optional per-device override in **Settings → Data** (`settings.googleClientId`, applied via
@@ -200,15 +246,18 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   so a typo can't lock the next restore. `appDataFolder` is **isolated per OAuth client**, so this can never
   collide with the finance app's own app-data. **Finance import stays a manual local-file step** on the Sync
   screen (the appData scope can't see other apps' files, so the Drive Picker was removed). On **native** the
-  GIS flow can't run in a WebView yet, so Drive shows an honest "use the web app / local backup" message;
+  GIS flow can't run in a WebView yet, so Drive shows an honest "use the web app / Export to a file" message;
   `public/oauth-redirect.html` + `VITE_OAUTH_REDIRECT_URL` are staged for the future Android Custom-Tab flow.
   All actions report success/failure through **toasts** — never silently.
-- **Data backup/restore** (`backup.ts` + `files.ts`): **Settings → Data** also exports every Dexie table as a
-  **local plain-JSON** `{ version, exportedAt, data }` file — web downloads a Blob, Android writes via
-  `@capacitor/filesystem` to External `finsite-construction/` (`saveTextFile()`). Restore validates the
-  shape (`validateDataBackup()` — descriptive errors, detects an encrypted envelope), then **replaces all
-  local data** behind a destructive-confirm dialog. (Local = plain-JSON for convenience; Drive = always
-  encrypted.)
+- **Export / Import** (`backup.ts` + `files.ts`): there is **no separate local backup/restore** — data already
+  persists in IndexedDB. **Settings → Data** offers **Export** and **Import** plus an **"Encrypt backup /
+  export"** toggle (`settings.encryptBackup`, default ON; turning it OFF shows a warning that the file will
+  be readable by anyone). **Export** writes a timestamped `centering-export-YYYYMMDD-HHmmss.json` to
+  **Downloads** (web Blob download / Android `saveToDownloads()`): encrypted via the envelope when the toggle
+  is on (prompts a passphrase, min 8), plain JSON when off. **Import** picks a file, auto-detects encrypted
+  (`ciphertext`) vs plain — prompting for the passphrase only when encrypted — then **replaces all local
+  data** behind a destructive-confirm dialog (`restoreFromText()` / `restoreDataBackup()`). Google Drive is
+  unchanged and **always encrypted** regardless of the toggle.
 
 ## Deployment
 
@@ -216,17 +265,28 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   adds the SPA fallback rewrite.
 - **Android APK (Capacitor + GitHub Actions):** `.github/workflows/build-apk.yml` → Node 20 / JDK 17 /
   Android SDK → `npm install` (no lockfile committed) → `npm run build` → `npx cap add android`
-  (`android/` not committed) → `scripts/patch-android.sh` (idempotent: SDK versions, INTERNET
-  permission) → `npx cap sync android` (pulls in `@capacitor/app` + the biometric plugin) →
+  (`android/` not committed) → **decode signing keystore** (`ANDROID_KEYSTORE_B64` → `android/app/release.keystore`)
+  → `scripts/patch-android.sh` (idempotent: SDK versions, INTERNET permission, OAuth deep-link, **version +
+  signing**) → `npx cap sync android` (pulls in `@capacitor/app`, the biometric plugin, `@capacitor/share`) →
   `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags attach to a Release.
   `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager", webDir `dist`.
-- **Env vars** (`VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL`) configure encrypted Drive backup:
-  `VITE_GOOGLE_CLIENT_ID` is the shared app Client ID (a per-device id in **Settings → Data** overrides it);
-  `VITE_OAUTH_REDIRECT_URL` points at the hosted `public/oauth-redirect.html` used only by the future
-  Android Custom-Tab flow. In Google Cloud: create one **Web** OAuth client, **enable the Drive API**, and
-  add the **`drive.appdata`** scope on the consent screen. `VITE_*` ships in the client bundle (Vercel
-  "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine without them (offline +
-  local backup paths unaffected).
+- **Consistent APK signing (so updates install in-place — no "package conflict"):** because `android/` is
+  regenerated every run (each `assembleDebug` would otherwise pick a fresh random debug key), `patch-android.sh`
+  **appends an extra `android {}` block** to `app/build.gradle` that (a) sets `versionCode` from
+  `CWM_VERSION_CODE` (= `github.run_number`, always increasing) + a readable `versionName` (`CWM_VERSION_NAME`),
+  and (b) when `android/app/release.keystore` exists, declares a `release` signingConfig reading
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` from the env and applies it to
+  **both `debug` and `release` build types** — so every APK carries the **same signature**. With no keystore
+  secret set the build still succeeds on the default debug key (no signature stability, but no breakage).
+- **Env vars / CI secrets:**
+  - `VITE_GOOGLE_CLIENT_ID`, `VITE_OAUTH_REDIRECT_URL` — encrypted Drive backup. `VITE_GOOGLE_CLIENT_ID` is the
+    shared app Client ID (a per-device id in **Settings → Data** overrides it); `VITE_OAUTH_REDIRECT_URL` points
+    at the hosted `public/oauth-redirect.html` (future Android Custom-Tab flow). In Google Cloud: one **Web** OAuth
+    client, **enable the Drive API**, add the **`drive.appdata`** scope. `VITE_*` ships in the client bundle (Vercel
+    "Sensitive = OFF"); read defensively via `env.ts` so the app builds/runs fine without them.
+  - **Android signing secrets** (GitHub repo → Settings → Secrets → Actions): `ANDROID_KEYSTORE_B64` (base64 of the
+    `.jks`/`.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Generate once with
+    `keytool` and keep them forever — re-generating the key changes the signature and breaks in-place updates.
 
 ## Why (deliberate decisions — don't undo)
 
@@ -261,7 +321,12 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
 - **Native biometric is unverified on-device** — the web WebAuthn path is testable; the APK path uses a
   Capacitor plugin that needs a real device/build to confirm.
 - `decryptFlexible()` is heuristic until validated against a **real encrypted** txn export.
-- Bundle is one ~180 KB-gzipped chunk (route-level code-splitting is a possible optimization).
+- Main web chunk is ~195 KB gzipped; the PDF libs (jspdf/jspdf-autotable/html2canvas) are **lazy, native-only**
+  chunks (loaded only when printing the weekly summary on the APK) and are kept out of the web PWA precache.
+  Route-level code-splitting of the main chunk is still a possible optimization.
+- **Native weekly print + Android signing are unverified on-device** — they build and the web/typecheck/test
+  paths pass, but the landscape-PDF share intent and the consistent-keystore in-place update need a real device
+  + the four `ANDROID_*` secrets set in CI to confirm.
 
 ## Run / build / test / deploy locally
 

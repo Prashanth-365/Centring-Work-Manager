@@ -16,3 +16,6 @@ android/
 ios/
 *.keystore
 *.jks
+# Signing-key material — lives in CI secrets (ANDROID_KEYSTORE_B64), never the repo
+*.keystore.b64
+release.keystore.b64

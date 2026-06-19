@@ -34,6 +34,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // The PDF libs (jspdf/html2canvas/dompurify) power the NATIVE-only weekly
+        // print path — the web build uses window.print(). Keep them out of the
+        // PWA precache so web installs stay lean; they still load on demand and
+        // are bundled into the APK on native.
+        globIgnores: ['**/jspdf*.js', '**/html2canvas*.js', '**/purify*.js'],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         navigateFallback: 'index.html',

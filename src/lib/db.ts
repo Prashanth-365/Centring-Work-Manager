@@ -146,6 +146,7 @@ export function defaultSettings(): Settings {
     defaultMaxDaysPerWeek: DEFAULTS.maxDaysPerWeek,
     collectAlertDays: DEFAULTS.collectAlertDays,
     weekStartsOn: DEFAULTS.weekStartsOn,
+    encryptBackup: true,
     appLock: { enabled: false },
     updatedAt: now(),
   }

@@ -50,4 +50,53 @@ else
   echo "patch-android: WARNING AndroidManifest.xml not found, skipping deep-link patch." >&2
 fi
 
+# 4. Consistent signing + version. android/ is regenerated every CI run, so we
+#    append (once) an extra `android {}` block to the app module's build.gradle:
+#      - versionCode / versionName from CI env (auto-incrementing, readable), so
+#        Android never blocks an update as a "downgrade".
+#      - a release signingConfig from a decoded keystore + env-supplied creds,
+#        applied to BOTH debug and release builds so every APK carries the SAME
+#        signature and installs in-place over the previous version.
+#    When no keystore was decoded (secret unset), only the version is set and the
+#    build falls back to the default debug key.
+APP_GRADLE="$ANDROID_DIR/app/build.gradle"
+KEYSTORE="$ANDROID_DIR/app/release.keystore"
+if [ -f "$APP_GRADLE" ]; then
+  if grep -q 'cwm-signing' "$APP_GRADLE"; then
+    echo "patch-android: version/signing block already present."
+  else
+    {
+      echo ''
+      echo '// cwm-signing — injected by scripts/patch-android.sh (android/ is regenerated each build)'
+      echo 'android {'
+      echo '    defaultConfig {'
+      echo '        versionCode (System.getenv("CWM_VERSION_CODE") ?: "1").toInteger()'
+      echo '        versionName (System.getenv("CWM_VERSION_NAME") ?: "0.1.2")'
+      echo '    }'
+      if [ -f "$KEYSTORE" ]; then
+        echo '    signingConfigs {'
+        echo '        release {'
+        echo '            storeFile file("release.keystore")'
+        echo '            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")'
+        echo '            keyAlias System.getenv("ANDROID_KEY_ALIAS")'
+        echo '            keyPassword System.getenv("ANDROID_KEY_PASSWORD")'
+        echo '        }'
+        echo '    }'
+        echo '    buildTypes {'
+        echo '        debug { signingConfig signingConfigs.release }'
+        echo '        release { signingConfig signingConfigs.release }'
+        echo '    }'
+      fi
+      echo '}'
+    } >> "$APP_GRADLE"
+    if [ -f "$KEYSTORE" ]; then
+      echo "patch-android: injected versionCode/Name + release signingConfig (debug + release)."
+    else
+      echo "patch-android: injected versionCode/Name (no keystore — default debug signing)."
+    fi
+  fi
+else
+  echo "patch-android: WARNING app/build.gradle not found, skipping version/signing patch." >&2
+fi
+
 echo "patch-android: done."

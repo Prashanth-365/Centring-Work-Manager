@@ -12,6 +12,7 @@ import {
   Link2,
   Lock,
   Plus,
+  ShieldAlert,
   Tags,
   UploadCloud,
   UtensilsCrossed,
@@ -42,7 +43,7 @@ import {
   restoreFromText,
   verifyEnvelopePassphrase,
 } from '@/lib/backup'
-import { fileTimestamp, saveTextFile } from '@/lib/files'
+import { downloadStamp, saveToDownloads } from '@/lib/files'
 import {
   backupToDrive,
   connectDrive,
@@ -370,14 +371,18 @@ function AppLockSection({ lock }: { lock: AppLockConfig }) {
 }
 
 function DataSection({ settings }: { settings: SettingsType }) {
-  const restoreRef = React.useRef<HTMLInputElement>(null)
+  const importRef = React.useRef<HTMLInputElement>(null)
   const [busy, setBusy] = React.useState('')
   const [confirmFile, setConfirmFile] = React.useState<File>()
+  const [warnOff, setWarnOff] = React.useState(false)
+  const [passMode, setPassMode] = React.useState<'export' | 'import'>()
+  const [pendingImportText, setPendingImportText] = React.useState<string>()
   const [connected, setConnected] = React.useState(isDriveConnected())
   const [email, setEmail] = React.useState(getDriveUser()?.email ?? settings.driveEmail ?? '')
   const [driveAction, setDriveAction] = React.useState<'backup' | 'restore'>()
   const [pass, setPass] = React.useState('')
   const driveOn = driveConfigured()
+  const encrypt = settings.encryptBackup ?? true
 
   async function withBusy(key: string, fn: () => Promise<void>) {
     setBusy(key)
@@ -396,21 +401,84 @@ function DataSection({ settings }: { settings: SettingsType }) {
     await updateSettings({ lastDriveSyncAt: Date.now(), ...(em ? { driveEmail: em } : {}) })
   }
 
-  // --- Local backup / restore (plain JSON, on-device) ---
-  async function localBackup() {
-    await withBusy('local-backup', async () => {
-      const json = await exportDataBackup()
-      const res = await saveTextFile(`backup-${fileTimestamp()}.json`, json)
-      toast.success(res.native ? `Saved to ${res.location}` : 'Backup downloaded.')
+  // --- Encrypt toggle (controls Export / Import; Drive is always encrypted) ---
+  function onToggleEncrypt(on: boolean) {
+    if (on) void updateSettings({ encryptBackup: true })
+    else setWarnOff(true) // warn before turning encryption OFF
+  }
+
+  // --- Export to Downloads (respects the encrypt toggle) ---
+  function startExport() {
+    if (encrypt) {
+      setPass('')
+      setPassMode('export')
+    } else {
+      void runExport()
+    }
+  }
+
+  async function runExport(passphrase?: string) {
+    await withBusy('export', async () => {
+      const json = passphrase
+        ? JSON.stringify(await buildBackupEnvelope(passphrase), null, 2)
+        : await exportDataBackup()
+      const res = await saveToDownloads(`centering-export-${downloadStamp()}.json`, json)
+      toast.success(res.native ? `Saved to ${res.location}` : 'Export downloaded.')
     })
   }
 
-  async function doRestore(file: File) {
-    await withBusy('local-restore', async () => {
-      const { tables, rows } = await restoreDataBackup(await file.text())
-      toast.success(`Restored ${rows} records across ${tables} tables. Reloading…`)
+  // --- Import (replaces all data; auto-detects encrypted vs plain JSON) ---
+  async function proceedImport(file: File) {
+    setConfirmFile(undefined)
+    let text: string
+    try {
+      text = await file.text()
+    } catch {
+      toast.error('Could not read that file.')
+      return
+    }
+    let encrypted = false
+    try {
+      encrypted = !!(JSON.parse(text) as { ciphertext?: unknown })?.ciphertext
+    } catch {
+      /* not JSON / plain backup — restoreDataBackup will validate it */
+    }
+    if (encrypted) {
+      setPendingImportText(text)
+      setPass('')
+      setPassMode('import')
+      return
+    }
+    await withBusy('import', async () => {
+      const { tables, rows } = await restoreDataBackup(text)
+      toast.success(`Imported ${rows} records across ${tables} tables. Reloading…`)
       setTimeout(() => window.location.reload(), 1100)
     })
+  }
+
+  function submitLocalPass() {
+    const passphrase = pass
+    const mode = passMode
+    if (mode === 'export' && passphrase.length < 8) {
+      toast.error('Passphrase must be at least 8 characters.')
+      return
+    }
+    if (mode === 'import' && passphrase.length === 0) {
+      toast.error('Enter the passphrase for this file.')
+      return
+    }
+    setPassMode(undefined)
+    if (mode === 'export') {
+      void runExport(passphrase)
+    } else if (mode === 'import') {
+      const text = pendingImportText
+      void withBusy('import', async () => {
+        if (!text) throw new Error('Nothing to import.')
+        await restoreFromText(text, passphrase)
+        toast.success('Imported from encrypted file. Reloading…')
+        setTimeout(() => window.location.reload(), 1100)
+      })
+    }
   }
 
   // --- Google Drive (encrypted backup in the user's private appDataFolder) ---
@@ -482,23 +550,32 @@ function DataSection({ settings }: { settings: SettingsType }) {
     : null
 
   return (
-    <Section icon={Database} title="Data" hint="Back up and restore everything on this device">
-      {/* Local backup / restore */}
+    <Section icon={Database} title="Data" hint="Export, import, and encrypted Google Drive backup">
+      {/* Encrypt toggle — controls Export / Import (Drive is always encrypted). */}
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2">
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">Encrypt backup / export</span>
+          <span className="block text-xs text-muted-foreground">
+            {encrypt
+              ? 'Export is protected with a passphrase.'
+              : 'Export is plain JSON — anyone with the file can read it.'}
+          </span>
+        </span>
+        <Switch checked={encrypt} onCheckedChange={onToggleEncrypt} />
+      </label>
+
+      {/* Export → Downloads · Import replaces all local data */}
       <div className="grid grid-cols-2 gap-2.5">
-        <Button variant="outline" onClick={localBackup} disabled={busy === 'local-backup'}>
+        <Button variant="outline" onClick={startExport} disabled={busy === 'export'}>
           <DownloadCloud className="size-4" />
-          {busy === 'local-backup' ? 'Saving…' : 'Back up'}
+          {busy === 'export' ? 'Exporting…' : 'Export'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => restoreRef.current?.click()}
-          disabled={busy === 'local-restore'}
-        >
+        <Button variant="outline" onClick={() => importRef.current?.click()} disabled={busy === 'import'}>
           <UploadCloud className="size-4" />
-          {busy === 'local-restore' ? 'Restoring…' : 'Restore'}
+          {busy === 'import' ? 'Importing…' : 'Import'}
         </Button>
         <input
-          ref={restoreRef}
+          ref={importRef}
           type="file"
           accept=".json,application/json"
           className="hidden"
@@ -509,6 +586,9 @@ function DataSection({ settings }: { settings: SettingsType }) {
           }}
         />
       </div>
+      <p className="text-xs text-muted-foreground">
+        Export saves a timestamped file to your Downloads. Import replaces all data on this device.
+      </p>
 
       {/* Google Drive — encrypted backup in your private app folder */}
       <div className="space-y-3 rounded-lg border border-border bg-accent/30 p-3">
@@ -639,11 +719,11 @@ function DataSection({ settings }: { settings: SettingsType }) {
         </DialogContent>
       </Dialog>
 
-      {/* Restore confirmation — replacing all local data is destructive. */}
+      {/* Import confirmation — replacing all local data is destructive. */}
       <Dialog open={!!confirmFile} onOpenChange={(o) => !o && setConfirmFile(undefined)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Restore from backup?</DialogTitle>
+            <DialogTitle>Import &amp; replace all data?</DialogTitle>
             <DialogDescription>
               This replaces ALL current data in this app with the contents of
               {confirmFile ? ` “${confirmFile.name}”` : ' the chosen file'}. This cannot be undone.
@@ -657,12 +737,88 @@ function DataSection({ settings }: { settings: SettingsType }) {
               variant="destructive"
               onClick={() => {
                 const f = confirmFile
-                setConfirmFile(undefined)
-                if (f) void doRestore(f)
+                if (f) void proceedImport(f)
               }}
             >
               <HardDriveDownload className="size-4" />
-              Replace &amp; restore
+              Replace &amp; import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Warn before turning encryption OFF. */}
+      <Dialog open={warnOff} onOpenChange={setWarnOff}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="size-5 text-destructive" />
+              Turn off encryption?
+            </DialogTitle>
+            <DialogDescription>
+              Your exported data won’t be encrypted — anyone with the file can read it. Google Drive
+              backups stay encrypted regardless of this setting.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWarnOff(false)}>
+              Keep encryption on
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setWarnOff(false)
+                void updateSettings({ encryptBackup: false })
+              }}
+            >
+              Turn off
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Export / import passphrase prompt (encrypted file). */}
+      <Dialog open={!!passMode} onOpenChange={(o) => !o && setPassMode(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {passMode === 'import' ? 'Decrypt import' : 'Encrypt export'}
+            </DialogTitle>
+            <DialogDescription>
+              {passMode === 'import'
+                ? 'Enter the passphrase this file was exported with. It decrypts on this device.'
+                : 'Choose a passphrase (min 8 characters). You’ll need the exact same one to import it again — it’s never stored or sent anywhere.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="password"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              placeholder="Passphrase"
+              className="pl-9"
+              autoComplete="off"
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && submitLocalPass()}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPassMode(undefined)}>
+              Cancel
+            </Button>
+            <Button variant={passMode === 'import' ? 'destructive' : 'default'} onClick={submitLocalPass}>
+              {passMode === 'import' ? (
+                <>
+                  <UploadCloud className="size-4" />
+                  Decrypt &amp; import
+                </>
+              ) : (
+                <>
+                  <DownloadCloud className="size-4" />
+                  Encrypt &amp; export
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

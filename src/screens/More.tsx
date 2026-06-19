@@ -40,7 +40,7 @@ export function More() {
             </Link>
           ))}
         </div>
-        <p className="pt-2 text-center text-xs text-muted-foreground">Centering Work Manager v0.1</p>
+        <p className="pt-2 text-center text-xs text-muted-foreground">Centering Work Manager · v{__APP_VERSION__}</p>
       </div>
     </>
   )

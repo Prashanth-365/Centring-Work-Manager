@@ -12,6 +12,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Consistent signing so APK updates install in-place (no "package conflict").
+      # scripts/patch-android.sh wires these into android/app/build.gradle; gradle
+      # reads them from the environment at build time. Safe to be empty — the
+      # build then falls back to the default debug key.
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # Auto-incrementing versionCode + a readable versionName so Android never
+      # blocks a build as a "downgrade".
+      CWM_VERSION_CODE: ${{ github.run_number }}
+      CWM_VERSION_NAME: 0.1.2.${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,6 +56,19 @@ jobs:
       # android/ is not committed — add it fresh each run.
       - name: Add Android platform
         run: npx cap add android
+
+      # Decode the signing keystore from a base64 secret into android/app/. When
+      # the secret isn't set the build continues with the default debug key.
+      - name: Decode signing keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > android/app/release.keystore
+            echo "Decoded release keystore to android/app/release.keystore."
+          else
+            echo "No ANDROID_KEYSTORE_B64 secret — building with the default debug key."
+          fi
 
       - name: Patch Android project
         run: bash scripts/patch-android.sh

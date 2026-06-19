@@ -14,7 +14,7 @@ const ITEMS = [
 export function BottomNav() {
   const reviewCount = useReviewCount()
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/70 bg-background/90 backdrop-blur-lg">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/70 bg-background/90 backdrop-blur-lg md:hidden">
       <div className="mx-auto flex max-w-md items-stretch justify-around px-1 pb-[env(safe-area-inset-bottom)]">
         {ITEMS.map((item) => (
           <NavLink

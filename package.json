@@ -1,7 +1,7 @@
 {
   "name": "centering-work-manager",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,6 +21,7 @@
     "@capacitor/browser": "^6.0.6",
     "@capacitor/core": "^6.2.0",
     "@capacitor/filesystem": "^6.0.4",
+    "@capacitor/share": "^6.0.3",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-label": "^2.1.0",
     "@radix-ui/react-popover": "^1.1.2",
@@ -33,6 +34,8 @@
     "date-fns": "^4.1.0",
     "dexie": "^4.0.10",
     "dexie-react-hooks": "^1.1.7",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

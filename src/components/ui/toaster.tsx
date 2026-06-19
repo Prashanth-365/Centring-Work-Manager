@@ -3,9 +3,11 @@ import { CheckCircle2, Info, TriangleAlert, X } from 'lucide-react'
 import { dismissToast, useToasts, type ToastVariant } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
+// Solid/opaque backgrounds for every variant so the message is always legible
+// over scrolled page content (a translucent bg made the error toast unreadable).
 const VARIANT_STYLES: Record<ToastVariant, string> = {
-  success: 'border-success/30 bg-success/10 text-success',
-  error: 'border-destructive/30 bg-destructive/10 text-destructive',
+  success: 'border-success/40 bg-card text-success',
+  error: 'border-destructive/50 bg-card text-destructive',
   info: 'border-border bg-card text-foreground',
 }
 

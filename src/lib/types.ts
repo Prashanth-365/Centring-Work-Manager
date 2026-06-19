@@ -195,6 +195,9 @@ export interface Settings {
   defaultMaxDaysPerWeek: number
   collectAlertDays: number // default 18
   weekStartsOn: number // 1 = Monday
+  /** Encrypt the Export file with a passphrase (default true). When false, Export
+   * writes plain JSON. Drive backup is always encrypted regardless. */
+  encryptBackup?: boolean
   appLock: AppLockConfig
   /** @deprecated No longer used — the Drive OAuth client id now comes solely
    * from the VITE_GOOGLE_CLIENT_ID build env (no in-app field). Kept on the type
