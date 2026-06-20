@@ -70,8 +70,8 @@ if [ -f "$APP_GRADLE" ]; then
       echo '// cwm-signing — injected by scripts/patch-android.sh (android/ is regenerated each build)'
       echo 'android {'
       echo '    defaultConfig {'
-      echo '        versionCode (System.getenv("CWM_VERSION_CODE") ?: "1").toInteger()'
-      echo '        versionName (System.getenv("CWM_VERSION_NAME") ?: "0.1.2")'
+      echo '        versionCode = (System.getenv("CWM_VERSION_CODE") ?: "1").toInteger()'
+      echo '        versionName = (System.getenv("CWM_VERSION_NAME") ?: "0.1.2")'
       echo '    }'
       if [ -f "$KEYSTORE" ]; then
         echo '    signingConfigs {'
