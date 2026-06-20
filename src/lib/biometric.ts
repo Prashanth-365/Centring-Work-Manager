@@ -56,7 +56,7 @@ export async function enrollBiometric(): Promise<string | undefined> {
     const cred = (await navigator.credentials.create({
       publicKey: {
         challenge,
-        rp: { name: 'Centering Work Manager', id: location.hostname },
+        rp: { name: 'Centering Manager', id: location.hostname },
         user: { id: userId, name: 'meistri', displayName: 'Meistri' },
         pubKeyCredParams: [
           { type: 'public-key', alg: -7 },
@@ -83,7 +83,7 @@ export async function verifyBiometric(webauthnCredId?: string): Promise<boolean>
     try {
       const mod = await import('@aparajita/capacitor-biometric-auth')
       await mod.BiometricAuth.authenticate({
-        reason: 'Unlock Centering Work Manager',
+        reason: 'Unlock Centering Manager',
         cancelTitle: 'Use PIN',
         allowDeviceCredential: true,
         androidTitle: 'Unlock',

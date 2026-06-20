@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Domain types for the Centering Work Manager.
+// Domain types for the Centering Manager.
 // Everything is keyed on UUID `id`. Money is stored as plain numbers (rupees).
 // Dates are ISO 'yyyy-MM-dd' strings; times are 'HH:mm'.
 // ---------------------------------------------------------------------------
@@ -195,9 +195,13 @@ export interface Settings {
   defaultMaxDaysPerWeek: number
   collectAlertDays: number // default 18
   weekStartsOn: number // 1 = Monday
-  /** Encrypt the Export file with a passphrase (default true). When false, Export
-   * writes plain JSON. Drive backup is always encrypted regardless. */
+  /** Encrypt backups with a passphrase (default true). Governs BOTH the local
+   * Export file AND the Google Drive backup: when false, each is written as plain
+   * JSON (with a warning). Restore/Import auto-detect encrypted vs plain. */
   encryptBackup?: boolean
+  /** UI theme. Defaults to dark (the app's original look). Applied via the `dark`
+   * class on <html>; mirrored to localStorage for a flash-free boot. */
+  theme?: 'light' | 'dark'
   appLock: AppLockConfig
   /** @deprecated No longer used — the Drive OAuth client id now comes solely
    * from the VITE_GOOGLE_CLIENT_ID build env (no in-app field). Kept on the type

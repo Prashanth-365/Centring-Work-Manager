@@ -1,4 +1,4 @@
-# CLAUDE.md — Centering Work Manager
+# CLAUDE.md — Centering Manager
 
 > Context for future Claude Code sessions. Read this before making changes so the
 > deliberate design choices below aren't accidentally undone. **Keep this file
@@ -36,9 +36,10 @@ src/lib/
   types.ts       domain types
   crypto.ts      AES-256-GCM / PBKDF2-SHA256 (200k) + decryptFlexible()  ← txn-app interop point
   sync.ts        read txn backup → extractConstruction() → upsert by UUID (+ importFingerprint); throws descriptive diagnostics (names the categories/keys it saw) when "Construction" is missing or the shape is unexpected
-  backup.ts      this app's own data — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup) AND the encrypted envelope cwm-backup-v1 (buildBackupEnvelope/restoreFromText). Used by both Export/Import (Settings → Data, plain or encrypted per the toggle) and Google Drive (always encrypted) + verifyEnvelopePassphrase() for the pre-overwrite check
+  backup.ts      this app's own data — plain-JSON { version, exportedAt, data:{...tables} } (buildDataBackup/restoreDataBackup) AND the encrypted envelope cwm-backup-v1 (buildBackupEnvelope/restoreFromText). Used by both Export/Import and Google Drive — BOTH honor the encrypt toggle (plain or encrypted) + verifyEnvelopePassphrase() for the pre-overwrite check on encrypted Drive backups
+  theme.ts       light/dark theme — applyTheme()/storedTheme() toggle the `dark` class on <html> (+ color-scheme), persist to settings.theme (Dexie) and mirror to localStorage['cwm-theme'] for the flash-free inline boot script in index.html. Default dark
   files.ts       platform-aware saveToDownloads()/saveBinaryToDownloads() — web Blob download / Android @capacitor/filesystem write to the public Downloads (Directory.ExternalStorage `Download/`, falling back to app-External when scoped storage blocks it) + downloadStamp() (YYYYMMDD-HHmmss filenames)
-  weeklyPdf.ts   native weekly-summary print — lazy jspdf + jspdf-autotable render the selected week to a LANDSCAPE PDF, saved to Downloads and handed to @capacitor/share (the Android print/share intent). Web keeps window.print(); this module is only imported on native so jspdf never enters the web bundle (workbox globIgnores keep the PDF libs out of the web PWA precache)
+  weeklyPdf.ts   native weekly-summary print — lazy jspdf + jspdf-autotable render the selected week to a LANDSCAPE PDF, written to the app CACHE dir via @capacitor/filesystem and handed to @capacitor/share (the Android print/share intent). Sharing from Cache (NOT a public Downloads path) is what makes native print work — a Downloads file:// URI throws Android's FileUriExposedException. Web keeps window.print(); this module is only imported on native so jspdf never enters the web bundle (workbox globIgnores keep the PDF libs out of the web PWA precache)
   toast.ts       framework-agnostic toast store (toast.success/error/info + useToasts) so non-React code (drive.ts) can notify too. Every variant uses an OPAQUE (bg-card) background so messages stay legible over scrolled content
   repo.ts        create/update helpers, setWorkerWage, attendance block-clash guard, categoryMap CRUD
   hooks.ts       Dexie useLiveQuery hooks
@@ -57,7 +58,9 @@ src/screens/     Dashboard, buildings/, molds/, workers/, owners/, attendance/, 
 bottom tab bar below `md`; at `md+` the bottom bar is hidden and a left **SideNav** (Home/Buildings/Workers/
 Owners/Attendance/Payments/Weekly/Settings) appears, with content constrained to `max-w-4xl` and the
 Dashboard's analytical sections flowing into two columns (`xl:grid-cols-2`). `SideNav` is a `<nav>` so the
-print stylesheet (which hides `nav`) drops it on paper.
+print stylesheet (which hides `nav`) drops it on paper. Focused **forms** use `FormScaffold`; passing
+**`wide`** (e.g. the Attendance form) switches it from the full-bleed mobile column to a centered
+`md:max-w-3xl` container with multi-column field grids and a right-aligned button row on desktop.
 
 ## Data model (Dexie, all keyed on UUID `id`)
 
@@ -81,7 +84,8 @@ print stylesheet (which hides `nav`) drops it on paper.
 - **categoryMap** — `id, sourceName, type` (txn sub-category NAME → our `SubCategory`)
 - **otherExpenseTypes** — `id, name` (seeded `FinanceCost`, `Theft`)
 - **settings** (single row `id:'app'`) — shift blocks, default food, `collectAlertDays`, `weekStartsOn`,
-  `encryptBackup?` (default true — controls Export/Import encryption; Drive is always encrypted),
+  `encryptBackup?` (default true — controls Export/Import AND Google Drive backup encryption),
+  `theme?` ('light'|'dark', default 'dark' — UI theme, applied via the `dark` class on <html>; see "Theme"),
   `appLock { enabled, method('pin'|'biometric'), pinHash?, salt?, webauthnCredId?, relockMinutes? }`
 
 > **No `dailyFood` table.** Food is day-wise but **computed live** (group attendance by worker+date,
@@ -140,13 +144,17 @@ this wide table with week prev/next. **Only workers with attendance that week (`
 listed**; a "Show all active workers" toggle reveals everyone (incl. zero-day workers carrying a
 balance), and the stat cards + table footer foot to the *displayed* rows (`sumRows`). It also has a
 **Maximize** button (full-screen, landscape-optimized overlay that best-effort-locks the device to
-landscape via `native.ts`, stays horizontally scrollable, and supports **pinch- and button-zoom** via the
-CSS `zoom` property — pinch uses non-passive touch listeners so it doesn't fight page zoom) and a
-**Print** button. **Print is platform-aware:** on **web** it's `window.print()` (the `@media print`
-sheet in `index.css` — `@page { size: landscape }`, app chrome hidden, a `table-layout: fixed`
-`.weekly-print-table` scaled so every column fits); on **native** the WebView can't open the system
-print dialog, so `lib/weeklyPdf.ts` renders the selected week to a landscape PDF (jspdf + jspdf-autotable)
-and hands it to the Android share/print intent (`@capacitor/share`), saving it to Downloads as a fallback.
+landscape via `native.ts`, stays horizontally scrollable, and supports **pinch- and button-zoom** (CSS
+`zoom`; pinch uses non-passive touch listeners so it doesn't fight page zoom) **plus one-finger
+drag-to-pan** — Pointer Events on the `touch-action: none` container start a drag past a >5px threshold,
+set pointer capture, and adjust scrollLeft/Top; a 2nd pointer yields to the pinch handler and the
+scrollbars remain a fallback) and a **Print** button. **Print is platform-aware:** on **web** it's
+`window.print()` (the `@media print` sheet in `index.css` — `@page { size: landscape }`, app chrome
+hidden, a `table-layout: fixed` `.weekly-print-table` scaled so every column fits); on **native** the
+WebView can't open the system print dialog, so `lib/weeklyPdf.ts` renders the selected week to a landscape
+PDF (jspdf + jspdf-autotable), writes it to the app **Cache** dir (`@capacitor/filesystem`), and hands
+that file to the Android share/print sheet (`@capacitor/share`). Sharing from **Cache** (not a public
+Downloads path) is the fix for the `FileUriExposedException` that previously broke native print.
 
 **Period selector (`components/PeriodSelector` + `PeriodPicker`):** a Week / Month / Year selector with
 prev/next steps; tapping the label opens a picker (calendar week-picker, month grid, or decade year
@@ -256,8 +264,23 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   **Downloads** (web Blob download / Android `saveToDownloads()`): encrypted via the envelope when the toggle
   is on (prompts a passphrase, min 8), plain JSON when off. **Import** picks a file, auto-detects encrypted
   (`ciphertext`) vs plain — prompting for the passphrase only when encrypted — then **replaces all local
-  data** behind a destructive-confirm dialog (`restoreFromText()` / `restoreDataBackup()`). Google Drive is
-  unchanged and **always encrypted** regardless of the toggle.
+  data** behind a destructive-confirm dialog (`restoreFromText()` / `restoreDataBackup()`). **Google Drive
+  backup now honors the SAME `encryptBackup` toggle:** encrypted via the envelope (passphrase, min 8) when
+  on, plain JSON when off (gated behind an unencrypted-backup warning dialog). Drive **restore** downloads
+  the file, auto-detects encrypted vs plain (`isEncryptedBackup()` — shared with Import), and prompts for a
+  passphrase only when encrypted; the pre-overwrite passphrase check runs only against an existing
+  *encrypted* backup. No crypto is duplicated — both paths reuse `backup.ts` / `crypto.ts`.
+
+## Theme (light / dark)
+
+Both themes ship via the existing CSS-variable strategy — light tokens in `:root`, dark under `.dark`
+(`index.css`), Tailwind `darkMode: 'class'`. `lib/theme.ts` (`applyTheme`/`storedTheme`) toggles the `dark`
+class on `<html>` (and sets `color-scheme`). The choice persists in **`settings.theme`** (Dexie — so it
+travels with Export/Drive backups) and is **mirrored to `localStorage['cwm-theme']`** so the tiny inline
+script in `index.html` applies it **before first paint** (no flash). **Default is dark** (the app's original
+look); `LockGate` reconciles the DOM from the persisted setting on boot (covers post-restore drift), and
+**Settings → Appearance** flips it live. No chart library is used — every surface reads semantic tokens, so
+both themes work without per-component overrides.
 
 ## Deployment
 
@@ -267,9 +290,11 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   Android SDK → `npm install` (no lockfile committed) → `npm run build` → `npx cap add android`
   (`android/` not committed) → **decode signing keystore** (`ANDROID_KEYSTORE_B64` → `android/app/release.keystore`)
   → `scripts/patch-android.sh` (idempotent: SDK versions, INTERNET permission, OAuth deep-link, **version +
-  signing**) → `npx cap sync android` (pulls in `@capacitor/app`, the biometric plugin, `@capacitor/share`) →
-  `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags attach to a Release.
-  `capacitor.config.ts`: appId `app.centering.manager`, appName "Centering Work Manager", webDir `dist`.
+  signing**) → **`npx @capacitor/assets generate --android`** (adaptive launcher icons from `assets/` — must run
+  AFTER the signing patch and BEFORE sync) → `npx cap sync android` (pulls in `@capacitor/app`, the biometric
+  plugin, `@capacitor/share`) → `./gradlew assembleDebug` → artifact **`centering-debug-apk`**; on `v*` tags
+  attach to a Release. `capacitor.config.ts`: appId `app.centering.manager` (**never change — keeps in-place
+  updates working**), appName "Centering Manager", webDir `dist`.
 - **Consistent APK signing (so updates install in-place — no "package conflict"):** because `android/` is
   regenerated every run (each `assembleDebug` would otherwise pick a fresh random debug key), `patch-android.sh`
   **appends an extra `android {}` block** to `app/build.gradle` that (a) sets `versionCode` from
@@ -287,6 +312,27 @@ Status and dates stay in sync **both directions** and auto-advance as real dates
   - **Android signing secrets** (GitHub repo → Settings → Secrets → Actions): `ANDROID_KEYSTORE_B64` (base64 of the
     `.jks`/`.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Generate once with
     `keytool` and keep them forever — re-generating the key changes the signature and breaks in-place updates.
+
+## App identity & icons
+
+- **Display name is "Centering Manager"** (short name "Centering"). Set in `capacitor.config.ts` (`appName`,
+  drives Android `app_name`), the PWA manifest in `vite.config.ts` (`name`/`short_name`), `index.html`
+  `<title>`, and a few UI/footer strings (`SideNav`, `Settings`, `More`). The Android **package / `appId`
+  stays `app.centering.manager`** so updates install in place — **renaming is display-only.**
+- **Icon source art lives in `assets/`** (the `@capacitor/assets` convention): `icon-only.png` (full-bleed,
+  used for PWA "any" + apple-touch + favicons), `icon-foreground.png` + `icon-background.png` (amber→orange
+  gradient) for the Android **adaptive** icon and the **maskable** PWA icon.
+  - **Web/PWA PNGs** are generated by `scripts/gen-pwa-icons.mjs` (sharp) into **`public/icons/`**
+    (`icon-192/512` "any", `icon-512-maskable` = foreground-over-background, `apple-touch-icon`, `icon-16/32`)
+    and wired into the manifest `icons` array + `index.html`. We do **not** use `@capacitor/assets generate
+    --pwa` for these — it emits WebP and tags every icon "any maskable" without a real safe-zone composite.
+  - **Android adaptive icons** are generated in CI by `npx @capacitor/assets generate --android` (run after
+    the signing patch, before `cap sync`). `android/` is gitignored, so this is CI-only.
+  - Brand color is **`#F97316`** (`theme_color`, manifest `background_color`/splash, `index.html` theme-color).
+- **⚠️ Do not confuse the display name with the backup format marker.** `backup.ts` stamps every envelope with
+  `app: 'centering-work-manager'` and validates it on restore — that literal is a **format id**, independent of
+  the display name / `package.json` name. Changing it would make existing local + Google-Drive backups
+  un-restorable. Leave the three `'centering-work-manager'` literals in `backup.ts` alone.
 
 ## Why (deliberate decisions — don't undo)
 

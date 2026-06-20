@@ -11,8 +11,10 @@ import {
   HardDriveDownload,
   Link2,
   Lock,
+  Moon,
   Plus,
   ShieldAlert,
+  Sun,
   Tags,
   UploadCloud,
   UtensilsCrossed,
@@ -44,6 +46,7 @@ import {
   verifyEnvelopePassphrase,
 } from '@/lib/backup'
 import { downloadStamp, saveToDownloads } from '@/lib/files'
+import { applyTheme, type Theme } from '@/lib/theme'
 import {
   backupToDrive,
   connectDrive,
@@ -107,12 +110,51 @@ export function Settings() {
     setShiftBlocks((prev) => prev.map((b, idx) => (idx === i ? { ...b, [key]: value } : b)))
   }
 
+  // Theme toggle applies immediately (independent of "Save settings") and
+  // persists to Dexie + the localStorage mirror via applyTheme().
+  function onThemeChange(next: Theme) {
+    applyTheme(next)
+    void updateSettings({ theme: next })
+  }
+
   if (!settingsRow) return <PageHeader title="Settings" back />
 
   return (
     <>
       <PageHeader title="Settings" back />
       <div className="space-y-5 p-4">
+        {/* Appearance — light / dark theme (applies instantly) */}
+        <Section
+          icon={(settingsRow.theme ?? 'dark') === 'dark' ? Moon : Sun}
+          title="Appearance"
+          hint="Light or dark theme"
+        >
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+            {(
+              [
+                { v: 'light', l: 'Light', Icon: Sun },
+                { v: 'dark', l: 'Dark', Icon: Moon },
+              ] as const
+            ).map((o) => {
+              const active = (settingsRow.theme ?? 'dark') === o.v
+              return (
+                <button
+                  key={o.v}
+                  type="button"
+                  onClick={() => onThemeChange(o.v)}
+                  className={
+                    'flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-medium transition ' +
+                    (active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground')
+                  }
+                >
+                  <o.Icon className="size-4" />
+                  {o.l}
+                </button>
+              )
+            })}
+          </div>
+        </Section>
+
         {/* Shift blocks */}
         <Section icon={Clock} title="Shift blocks" hint="Each block is half a day">
           <div className="space-y-2">
@@ -228,7 +270,7 @@ export function Settings() {
         <DataSection settings={settingsRow} />
 
         <p className="pt-2 text-center text-xs text-muted-foreground">
-          Centering Work Manager · v{__APP_VERSION__} · all data stays on this device
+          Centering Manager · v{__APP_VERSION__} · all data stays on this device
         </p>
       </div>
     </>
@@ -370,6 +412,16 @@ function AppLockSection({ lock }: { lock: AppLockConfig }) {
   )
 }
 
+/** True if a backup file's text is an encrypted envelope (has `ciphertext`).
+ * Shared by Import and Drive restore so the format is detected one way. */
+function isEncryptedBackup(text: string): boolean {
+  try {
+    return !!(JSON.parse(text) as { ciphertext?: unknown })?.ciphertext
+  } catch {
+    return false
+  }
+}
+
 function DataSection({ settings }: { settings: SettingsType }) {
   const importRef = React.useRef<HTMLInputElement>(null)
   const [busy, setBusy] = React.useState('')
@@ -380,6 +432,12 @@ function DataSection({ settings }: { settings: SettingsType }) {
   const [connected, setConnected] = React.useState(isDriveConnected())
   const [email, setEmail] = React.useState(getDriveUser()?.email ?? settings.driveEmail ?? '')
   const [driveAction, setDriveAction] = React.useState<'backup' | 'restore'>()
+  // Unencrypted Drive flows (when the encrypt toggle is OFF): a confirm before a
+  // plain backup, and the downloaded plain text awaiting a destructive restore.
+  const [drivePlainBackup, setDrivePlainBackup] = React.useState(false)
+  const [drivePlainRestore, setDrivePlainRestore] = React.useState<string>()
+  // Encrypted Drive restore: the downloaded envelope text awaiting its passphrase.
+  const [driveRestoreText, setDriveRestoreText] = React.useState<string>()
   const [pass, setPass] = React.useState('')
   const driveOn = driveConfigured()
   const encrypt = settings.encryptBackup ?? true
@@ -437,13 +495,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
       toast.error('Could not read that file.')
       return
     }
-    let encrypted = false
-    try {
-      encrypted = !!(JSON.parse(text) as { ciphertext?: unknown })?.ciphertext
-    } catch {
-      /* not JSON / plain backup — restoreDataBackup will validate it */
-    }
-    if (encrypted) {
+    if (isEncryptedBackup(text)) {
       setPendingImportText(text)
       setPass('')
       setPassMode('import')
@@ -481,7 +533,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
     }
   }
 
-  // --- Google Drive (encrypted backup in the user's private appDataFolder) ---
+  // --- Google Drive (backup in the user's private appDataFolder; encryption per toggle) ---
   async function connect() {
     await withBusy('connect', async () => {
       const user = await connectDrive()
@@ -498,18 +550,39 @@ function DataSection({ settings }: { settings: SettingsType }) {
     toast.info('Disconnected from Google Drive.')
   }
 
-  // Drive backup/restore are encrypted on-device — collect a passphrase first.
-  function startDrive(action: 'backup' | 'restore') {
+  // Drive backup/restore honor the encrypt toggle (same as local Export/Import):
+  // encrypted → collect a passphrase; plain → confirm first. Restore downloads the
+  // file, auto-detects the format, and only asks for a passphrase when encrypted.
+  function startDriveBackup() {
     setPass('')
-    setDriveAction(action)
+    if (encrypt) setDriveAction('backup')
+    else setDrivePlainBackup(true)
+  }
+
+  async function startDriveRestore() {
+    await withBusy('drive-restore', async () => {
+      const text = await restoreFromDrive() // download once, then branch on format
+      if (isEncryptedBackup(text)) {
+        setDriveRestoreText(text)
+        setPass('')
+        setDriveAction('restore')
+      } else {
+        setDrivePlainRestore(text)
+      }
+    })
   }
 
   async function runDriveBackup(passphrase: string) {
     await withBusy('drive-backup', async () => {
-      // Pre-overwrite safety: if a backup already exists, the passphrase MUST
-      // decrypt it — otherwise a typo would lock the next restore.
+      // Pre-overwrite safety: if an ENCRYPTED backup already exists, the passphrase
+      // MUST decrypt it — otherwise a typo would lock the next restore. A plain
+      // existing backup has no passphrase and is about to be overwritten anyway.
       const existing = await peekDriveBackupText()
-      if (existing && !(await verifyEnvelopePassphrase(existing, passphrase))) {
+      if (
+        existing &&
+        isEncryptedBackup(existing) &&
+        !(await verifyEnvelopePassphrase(existing, passphrase))
+      ) {
         throw new Error(
           'That passphrase does not match your existing Drive backup. Use the same one, or disconnect to start fresh.',
         )
@@ -522,9 +595,18 @@ function DataSection({ settings }: { settings: SettingsType }) {
     })
   }
 
-  async function runDriveRestore(passphrase: string) {
+  async function runDriveBackupPlain() {
+    await withBusy('drive-backup', async () => {
+      await backupToDrive(await exportDataBackup()) // plain JSON, same shape as Export
+      setConnected(true)
+      await markDriveSync()
+      toast.success('Backup saved to Google Drive (unencrypted).')
+    })
+  }
+
+  async function runDriveRestore(text: string | undefined, passphrase: string) {
     await withBusy('drive-restore', async () => {
-      const text = await restoreFromDrive()
+      if (!text) throw new Error('Nothing to restore.')
       await restoreFromText(text, passphrase)
       setConnected(true)
       await markDriveSync()
@@ -533,16 +615,35 @@ function DataSection({ settings }: { settings: SettingsType }) {
     })
   }
 
+  async function runDriveRestorePlain(text: string) {
+    await withBusy('drive-restore', async () => {
+      const { tables, rows } = await restoreDataBackup(text)
+      setConnected(true)
+      await markDriveSync()
+      toast.success(`Restored ${rows} records across ${tables} tables. Reloading…`)
+      setTimeout(() => window.location.reload(), 1100)
+    })
+  }
+
   function submitDrive() {
     const action = driveAction
     const passphrase = pass
-    if (passphrase.length < 8) {
+    if (action === 'backup' && passphrase.length < 8) {
       toast.error('Passphrase must be at least 8 characters.')
       return
     }
+    if (action === 'restore' && passphrase.length === 0) {
+      toast.error('Enter the passphrase for this backup.')
+      return
+    }
     setDriveAction(undefined)
-    if (action === 'backup') void runDriveBackup(passphrase)
-    else if (action === 'restore') void runDriveRestore(passphrase)
+    if (action === 'backup') {
+      void runDriveBackup(passphrase)
+    } else if (action === 'restore') {
+      const text = driveRestoreText
+      setDriveRestoreText(undefined)
+      void runDriveRestore(text, passphrase)
+    }
   }
 
   const lastSync = settings.lastDriveSyncAt
@@ -551,14 +652,14 @@ function DataSection({ settings }: { settings: SettingsType }) {
 
   return (
     <Section icon={Database} title="Data" hint="Export, import, and encrypted Google Drive backup">
-      {/* Encrypt toggle — controls Export / Import (Drive is always encrypted). */}
+      {/* Encrypt toggle — controls Export / Import AND the Google Drive backup. */}
       <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2">
         <span className="min-w-0">
           <span className="block text-sm font-medium">Encrypt backup / export</span>
           <span className="block text-xs text-muted-foreground">
             {encrypt
-              ? 'Export is protected with a passphrase.'
-              : 'Export is plain JSON — anyone with the file can read it.'}
+              ? 'Export and Drive backup are protected with a passphrase.'
+              : 'Export and Drive backup are plain JSON — anyone with the file can read them.'}
           </span>
         </span>
         <Switch checked={encrypt} onCheckedChange={onToggleEncrypt} />
@@ -607,9 +708,19 @@ function DataSection({ settings }: { settings: SettingsType }) {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Backs up this app’s data, <span className="font-medium text-foreground">encrypted</span>{' '}
-          with your passphrase, to a private folder in your own Google Drive. Only this app can see
-          it; no one else — not even the developer — can read it.
+          Backs up this app’s data to a private folder in your own Google Drive — only this app can
+          see it.{' '}
+          {encrypt ? (
+            <>
+              It’s <span className="font-medium text-foreground">encrypted</span> with your
+              passphrase, so no one else — not even the developer — can read it.
+            </>
+          ) : (
+            <>
+              Encryption is <span className="font-medium text-destructive">off</span>, so it’s stored
+              as plain JSON. Turn on “Encrypt backup / export” above to protect it.
+            </>
+          )}
         </p>
 
         {!driveOn && (
@@ -642,7 +753,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
               )}
               <Button
                 variant="outline"
-                onClick={() => startDrive('backup')}
+                onClick={startDriveBackup}
                 disabled={busy === 'drive-backup'}
               >
                 <CloudUpload className="size-4" />
@@ -651,7 +762,7 @@ function DataSection({ settings }: { settings: SettingsType }) {
               <Button
                 variant="outline"
                 className="col-span-2"
-                onClick={() => startDrive('restore')}
+                onClick={() => void startDriveRestore()}
                 disabled={busy === 'drive-restore'}
               >
                 <CloudDownload className="size-4" />
@@ -747,6 +858,67 @@ function DataSection({ settings }: { settings: SettingsType }) {
         </DialogContent>
       </Dialog>
 
+      {/* Unencrypted Drive backup — confirm before uploading plain JSON. */}
+      <Dialog open={drivePlainBackup} onOpenChange={(o) => !o && setDrivePlainBackup(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="size-5 text-destructive" />
+              Back up unencrypted?
+            </DialogTitle>
+            <DialogDescription>
+              Encryption is off, so this backup is stored as plain JSON in your Google Drive app
+              folder — anyone who can read that file can read your data. Turn on “Encrypt backup /
+              export” above to protect it with a passphrase.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDrivePlainBackup(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setDrivePlainBackup(false)
+                void runDriveBackupPlain()
+              }}
+            >
+              <CloudUpload className="size-4" />
+              Back up unencrypted
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unencrypted Drive restore — the downloaded file is plain; confirm replace. */}
+      <Dialog open={!!drivePlainRestore} onOpenChange={(o) => !o && setDrivePlainRestore(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Restore &amp; replace all data?</DialogTitle>
+            <DialogDescription>
+              This Drive backup is unencrypted. Restoring replaces ALL current data on this device
+              with its contents. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDrivePlainRestore(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const t = drivePlainRestore
+                setDrivePlainRestore(undefined)
+                if (t) void runDriveRestorePlain(t)
+              }}
+            >
+              <CloudDownload className="size-4" />
+              Replace &amp; restore
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Warn before turning encryption OFF. */}
       <Dialog open={warnOff} onOpenChange={setWarnOff}>
         <DialogContent>
@@ -756,8 +928,8 @@ function DataSection({ settings }: { settings: SettingsType }) {
               Turn off encryption?
             </DialogTitle>
             <DialogDescription>
-              Your exported data won’t be encrypted — anyone with the file can read it. Google Drive
-              backups stay encrypted regardless of this setting.
+              Your exported file and your Google Drive backup won’t be encrypted — anyone with the
+              file can read it. You can turn this back on at any time.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

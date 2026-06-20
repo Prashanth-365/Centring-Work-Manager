@@ -147,6 +147,7 @@ export function defaultSettings(): Settings {
     collectAlertDays: DEFAULTS.collectAlertDays,
     weekStartsOn: DEFAULTS.weekStartsOn,
     encryptBackup: true,
+    theme: 'dark',
     appLock: { enabled: false },
     updatedAt: now(),
   }

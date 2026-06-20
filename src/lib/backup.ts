@@ -91,7 +91,7 @@ export async function restoreFromText(fileText: string, passphrase: string): Pro
     throw new Error('Backup file is not valid JSON.')
   }
   if (env.app !== 'centering-work-manager') {
-    throw new Error('This is not a Centering Work Manager backup.')
+    throw new Error('This is not a Centering Manager backup.')
   }
   const plaintext = await decryptEnvelope(env, passphrase)
   let payload: BackupPayload

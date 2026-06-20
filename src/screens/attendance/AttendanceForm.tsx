@@ -166,6 +166,7 @@ export function AttendanceForm() {
   return (
     <FormScaffold
       title={editing ? 'Edit attendance' : 'Add attendance'}
+      wide
       onSubmit={submit}
       submitting={saving}
       submitLabel={editing ? 'Save' : 'Add'}
@@ -180,46 +181,49 @@ export function AttendanceForm() {
         ) : undefined
       }
     >
-      <Field label="Worker" required>
-        <Combobox
-          options={workers
-            .filter((w) => w.active || w.id === workerId)
-            .map((w) => ({ value: w.id, label: w.name, sublabel: `${w.type} · ${money(currentWage(w))}/day` }))}
-          value={workerId}
-          onChange={setWorkerId}
-          onCreate={quickCreateWorker}
-          placeholder="Pick worker"
-        />
-      </Field>
+      {/* Core fields — stacked on phone, two columns on desktop. */}
+      <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
+        <Field label="Worker" required>
+          <Combobox
+            options={workers
+              .filter((w) => w.active || w.id === workerId)
+              .map((w) => ({ value: w.id, label: w.name, sublabel: `${w.type} · ${money(currentWage(w))}/day` }))}
+            value={workerId}
+            onChange={setWorkerId}
+            onCreate={quickCreateWorker}
+            placeholder="Pick worker"
+          />
+        </Field>
 
-      <Field label="Building" required hint="Add new buildings from the Buildings tab">
-        <Combobox
-          options={buildings
-            .filter((b) => b.status !== 'Closed' || b.id === buildingId)
-            .map((b) => ({ value: b.id, label: buildingName(b, ownersById), sublabel: b.location }))}
-          value={buildingId}
-          onChange={(v) => {
-            setBuildingId(v)
-            setMoldId(undefined)
-          }}
-          placeholder="Pick building"
-        />
-      </Field>
+        <Field label="Building" required hint="Add new buildings from the Buildings tab">
+          <Combobox
+            options={buildings
+              .filter((b) => b.status !== 'Closed' || b.id === buildingId)
+              .map((b) => ({ value: b.id, label: buildingName(b, ownersById), sublabel: b.location }))}
+            value={buildingId}
+            onChange={(v) => {
+              setBuildingId(v)
+              setMoldId(undefined)
+            }}
+            placeholder="Pick building"
+          />
+        </Field>
 
-      <Field label="Floor / mold" hint={buildingId ? undefined : 'Pick a building first'}>
-        <Combobox
-          options={molds.map((m) => ({ value: m.id, label: m.floorName }))}
-          value={moldId}
-          onChange={setMoldId}
-          placeholder={buildingId ? 'Pick floor (optional)' : '—'}
-          disabled={!buildingId}
-          allowClear
-        />
-      </Field>
+        <Field label="Floor / mold" hint={buildingId ? undefined : 'Pick a building first'}>
+          <Combobox
+            options={molds.map((m) => ({ value: m.id, label: m.floorName }))}
+            value={moldId}
+            onChange={setMoldId}
+            placeholder={buildingId ? 'Pick floor (optional)' : '—'}
+            disabled={!buildingId}
+            allowClear
+          />
+        </Field>
 
-      <Field label="Date" required>
-        {(fid) => <Input id={fid} type="date" value={date} onChange={(e) => setDate(e.target.value)} />}
-      </Field>
+        <Field label="Date" required>
+          {(fid) => <Input id={fid} type="date" value={date} onChange={(e) => setDate(e.target.value)} />}
+        </Field>
+      </div>
 
       {/* Shift blocks */}
       <div className="space-y-2.5">

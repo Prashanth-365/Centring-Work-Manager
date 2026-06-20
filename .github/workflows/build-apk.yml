@@ -23,7 +23,7 @@ jobs:
       # Auto-incrementing versionCode + a readable versionName so Android never
       # blocks a build as a "downgrade".
       CWM_VERSION_CODE: ${{ github.run_number }}
-      CWM_VERSION_NAME: 0.1.2.${{ github.run_number }}
+      CWM_VERSION_NAME: 0.1.3.${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +72,13 @@ jobs:
 
       - name: Patch Android project
         run: bash scripts/patch-android.sh
+
+      # Generate the app icons (adaptive foreground/background + round + legacy
+      # mipmap fallbacks) into android/app/src/main/res from the source art in
+      # assets/. Order matters: AFTER `cap add android` + the signing patch and
+      # BEFORE `cap sync` so the icons exist when the web assets/plugins sync.
+      - name: Generate app icons
+        run: npx @capacitor/assets generate --android
 
       - name: Sync Capacitor
         run: npx cap sync android

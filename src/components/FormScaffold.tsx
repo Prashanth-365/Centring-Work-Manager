@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X } from 'lucide-react'
 import { Button } from './ui/button'
+import { cn } from '@/lib/utils'
 
 export function FormScaffold({
   title,
@@ -11,6 +12,7 @@ export function FormScaffold({
   submitLabel = 'Save',
   secondaryAction,
   footerExtra,
+  wide = false,
   children,
 }: {
   title: React.ReactNode
@@ -25,13 +27,17 @@ export function FormScaffold({
     submitting?: boolean
   }
   footerExtra?: React.ReactNode
+  /** Use a wider, centered container at md+ (for multi-column forms like Attendance). */
+  wide?: boolean
   children: React.ReactNode
 }) {
   const navigate = useNavigate()
+  // Phone stays a single mobile column; `wide` forms widen + center on desktop.
+  const maxW = wide ? 'max-w-md md:max-w-3xl' : 'max-w-md'
   return (
     <form
       onSubmit={onSubmit}
-      className="relative mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background"
+      className={cn('relative mx-auto flex min-h-dvh w-full flex-col bg-background', maxW)}
     >
       <header className="sticky top-0 z-30 flex min-h-14 items-center gap-2 border-b border-border/70 bg-background/85 px-3 py-2 backdrop-blur-lg safe-top">
         <button
@@ -48,24 +54,29 @@ export function FormScaffold({
         </div>
       </header>
 
-      <div className="flex-1 space-y-5 px-4 py-5 pb-28">{children}</div>
+      <div className="flex-1 space-y-5 px-4 py-5 pb-28 md:px-6">{children}</div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-background/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur">
-        <div className="flex gap-2">
+      <div
+        className={cn(
+          'fixed inset-x-0 bottom-0 z-30 mx-auto border-t border-border bg-background/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur',
+          maxW,
+        )}
+      >
+        <div className="flex gap-2 md:justify-end">
           {footerExtra}
           {secondaryAction && (
             <Button
               type="button"
               size="lg"
               variant="outline"
-              className="flex-1"
+              className="flex-1 md:flex-none md:min-w-[10rem]"
               onClick={secondaryAction.onClick}
               disabled={submitting || secondaryAction.submitting}
             >
               {secondaryAction.submitting ? 'Saving…' : secondaryAction.label}
             </Button>
           )}
-          <Button type="submit" size="lg" className="flex-1" disabled={submitting}>
+          <Button type="submit" size="lg" className="flex-1 md:flex-none md:min-w-[10rem]" disabled={submitting}>
             {submitting ? 'Saving…' : submitLabel}
           </Button>
         </div>

@@ -1,14 +1,17 @@
 // Native print path for the Weekly summary (§ Android print fix).
 //
 // The Capacitor WebView's window.print() doesn't open Android's system print
-// dialog, so on native we render the selected week to a LANDSCAPE PDF that fits
-// the page, save it to Downloads, and hand it to the Android share/print intent.
+// dialog, so on native we render the selected week to a LANDSCAPE PDF, write it to
+// the app CACHE dir (@capacitor/filesystem), and hand that file to the Android
+// share/print sheet (@capacitor/share). Sharing from Cache works because
+// Capacitor's FileProvider can serve app-owned files — sharing a public Downloads
+// path would throw FileUriExposedException on Android 7+ (the original failure).
 // The web build keeps window.print() (see Weekly.tsx) — this module is only
 // imported on the native path, and jspdf is lazy-loaded so it never touches the
 // web bundle.
 import { format, parseISO } from 'date-fns'
 import type { WeeklyRow, WeeklyTotals } from './compute/weekly'
-import { saveBinaryToDownloads, downloadStamp } from './files'
+import { downloadStamp } from './files'
 
 export interface WeeklyPdfInput {
   /** Heading, e.g. "Weekly summary · 16 – 22 Jun 2026". */
@@ -23,11 +26,11 @@ const r = (n: number) => String(Math.round(n))
 const df = (n: number) => (n === 0 ? '·' : Number.isInteger(n) ? `${n}` : n.toFixed(1))
 
 /**
- * Build the landscape weekly PDF and hand it to the Android share/print intent
- * (falling back to a saved file in Downloads). Throws on failure so the caller
- * can surface it via a toast — never silent.
+ * Build the landscape weekly PDF, write it to the app cache dir, and hand it to
+ * the Android share/print sheet. Throws on a real failure (not user-cancel) so
+ * the caller can surface it via a toast — never silent.
  */
-export async function shareWeeklyPdf(input: WeeklyPdfInput): Promise<{ location: string }> {
+export async function shareWeeklyPdf(input: WeeklyPdfInput): Promise<{ uri: string }> {
   const { jsPDF } = await import('jspdf')
   const autoTable = (await import('jspdf-autotable')).default
 
@@ -89,15 +92,26 @@ export async function shareWeeklyPdf(input: WeeklyPdfInput): Promise<{ location:
   const dataUri = doc.output('datauristring')
   const base64 = dataUri.substring(dataUri.indexOf('base64,') + 7)
   const filename = `centering-weekly-${downloadStamp()}.pdf`
-  const { location } = await saveBinaryToDownloads(filename, base64, 'application/pdf')
 
-  // Hand the saved PDF to the Android share/print sheet when possible. A failure
-  // here is non-fatal — the file is already saved to Downloads.
+  // Write to the app CACHE dir, then share THAT file — Capacitor's Share plugin
+  // serves app-owned files (Cache/Data) via its FileProvider, whereas a public
+  // Downloads file:// path throws FileUriExposedException on Android 7+.
+  const { Filesystem, Directory } = await import('@capacitor/filesystem')
+  const { Share } = await import('@capacitor/share')
+  await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Cache })
+  const { uri } = await Filesystem.getUri({ path: filename, directory: Directory.Cache })
+
   try {
-    const { Share } = await import('@capacitor/share')
-    await Share.share({ title: input.title, url: location, dialogTitle: 'Print or share weekly summary' })
-  } catch {
-    /* sharing unavailable / cancelled — the file remains in Downloads */
+    await Share.share({
+      title: input.title,
+      text: input.title,
+      url: uri,
+      dialogTitle: 'Print or share weekly summary',
+    })
+  } catch (e) {
+    // A user cancel is not an error; anything else propagates to the caller toast.
+    const msg = (e as Error)?.message ?? ''
+    if (!/cancel/i.test(msg)) throw e
   }
-  return { location }
+  return { uri }
 }

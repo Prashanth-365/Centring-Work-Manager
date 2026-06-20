@@ -88,15 +88,15 @@ export function Weekly() {
       return
     }
     try {
-      const { location } = await import('@/lib/weeklyPdf').then((m) =>
-        m.shareWeeklyPdf({
-          title: `Weekly summary · ${formatRange(summary.start, summary.end)}`,
-          days: summary.days,
-          rows,
-          totals,
-        }),
-      )
-      toast.success(location === 'download' ? 'PDF created.' : `Saved ${location}`)
+      // Lazy import keeps jspdf out of the web bundle (native-only path).
+      const { shareWeeklyPdf } = await import('@/lib/weeklyPdf')
+      await shareWeeklyPdf({
+        title: `Weekly summary · ${formatRange(summary.start, summary.end)}`,
+        days: summary.days,
+        rows,
+        totals,
+      })
+      // The Android share/print sheet is the confirmation; nothing more to show.
     } catch (e) {
       toast.error((e as Error).message || 'Could not create the weekly PDF.')
     }
@@ -255,6 +255,74 @@ function FullscreenWeekly({
     }
   }, [setZoom])
 
+  // One-finger (and mouse) drag-to-pan. Pointer Events cover touch + mouse; we
+  // pan by adjusting scrollLeft/Top, while `touch-none` on the container stops the
+  // browser from also scrolling. A >5px threshold lets taps through, and a second
+  // pointer hands the gesture to the pinch-zoom handler above. Scrollbars remain.
+  const panRef = React.useRef<{
+    x: number
+    y: number
+    sl: number
+    st: number
+    id: number
+    dragging: boolean
+  } | null>(null)
+  const pointersDown = React.useRef(0)
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    pointersDown.current += 1
+    if (pointersDown.current > 1) {
+      panRef.current = null // second finger → let pinch-zoom take over
+      return
+    }
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const el = scrollRef.current
+    if (!el) return
+    panRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      sl: el.scrollLeft,
+      st: el.scrollTop,
+      id: e.pointerId,
+      dragging: false,
+    }
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const p = panRef.current
+    const el = scrollRef.current
+    if (!p || !el || pointersDown.current > 1) return
+    const dx = e.clientX - p.x
+    const dy = e.clientY - p.y
+    if (!p.dragging) {
+      if (Math.hypot(dx, dy) <= 5) return // below threshold — may still be a tap
+      p.dragging = true
+      try {
+        el.setPointerCapture(p.id)
+      } catch {
+        /* capture unsupported — panning still works */
+      }
+      el.style.cursor = 'grabbing'
+    }
+    el.scrollLeft = p.sl - dx
+    el.scrollTop = p.st - dy
+  }
+
+  function endPan(e: React.PointerEvent<HTMLDivElement>) {
+    pointersDown.current = Math.max(0, pointersDown.current - 1)
+    const el = scrollRef.current
+    const p = panRef.current
+    if (el && p?.dragging) {
+      try {
+        el.releasePointerCapture(p.id)
+      } catch {
+        /* nothing captured */
+      }
+      el.style.cursor = ''
+    }
+    if (pointersDown.current === 0) panRef.current = null
+  }
+
   return (
     <div className="fixed inset-0 z-[120] flex flex-col bg-background print:hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 safe-top">
@@ -310,7 +378,14 @@ function FullscreenWeekly({
           </button>
         </div>
       </div>
-      <div ref={scrollRef} className="flex-1 touch-none overflow-auto p-3">
+      <div
+        ref={scrollRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        className="flex-1 cursor-grab touch-none overflow-auto p-3"
+      >
         {rows.length === 0 ? (
           <EmptyState icon={Users} title="No payroll this week" description="No workers had attendance in the selected week." />
         ) : (

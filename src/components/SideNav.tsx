@@ -37,7 +37,7 @@ export function SideNav() {
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-bold leading-tight">Centering</p>
-          <p className="truncate text-[11px] text-muted-foreground">Work Manager</p>
+          <p className="truncate text-[11px] text-muted-foreground">Manager</p>
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-0.5">

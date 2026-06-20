@@ -6,6 +6,7 @@ import { useSettings } from '@/lib/hooks'
 import { verifyPin } from '@/lib/crypto'
 import { verifyBiometric } from '@/lib/biometric'
 import { onAppStateChange } from '@/lib/native'
+import { applyTheme } from '@/lib/theme'
 import type { AppLockConfig } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -119,6 +120,12 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     })
     return () => stop()
   }, [])
+
+  // Reconcile the theme from the persisted setting (Dexie is the source of truth;
+  // the pre-paint script in index.html applied the localStorage mirror already).
+  React.useEffect(() => {
+    applyTheme(settings?.theme ?? 'dark')
+  }, [settings?.theme])
 
   const lock = settings?.appLock
   const enabled = !!lock?.enabled

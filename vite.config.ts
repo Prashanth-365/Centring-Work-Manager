@@ -15,21 +15,22 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon.svg', 'icon-maskable.svg', 'favicon.ico'],
+      includeAssets: ['icons/apple-touch-icon.png', 'icons/icon-32.png', 'icons/icon-16.png'],
       manifest: {
-        name: 'Centering Work Manager',
+        name: 'Centering Manager',
         short_name: 'Centering',
         description: 'Centering / shuttering work, workers, owners, payments and profit tracker.',
-        theme_color: '#d97706',
-        background_color: '#faf8f5',
+        theme_color: '#F97316',
+        background_color: '#F97316',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
         categories: ['business', 'productivity'],
         icons: [
-          { src: 'icon.svg', sizes: '192x192 512x512 any', type: 'image/svg+xml', purpose: 'any' },
-          { src: 'icon-maskable.svg', sizes: '192x192 512x512 any', type: 'image/svg+xml', purpose: 'maskable' },
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
