@@ -23,6 +23,9 @@ import {
 import { byId, buildingName } from '@/lib/select'
 import { formatDate, todayISO } from '@/lib/dates'
 import { money } from '@/lib/format'
+import { isNative } from '@/lib/native'
+import { toast } from '@/lib/toast'
+import type { BillPdfSheet } from '@/lib/billPdf'
 import type { Building, Mold, Owner } from '@/lib/types'
 
 const COMPANY = 'Sri Siddeshwara Centering Works'
@@ -212,6 +215,100 @@ function PrintWrap({ meta, children }: { meta: string; children: React.ReactNode
 }
 
 /* ------------------------------------------------------------------ */
+/* Native print — build jspdf sheets and hand off to the share sheet   */
+/* ------------------------------------------------------------------ */
+
+function sheetInfoPairs(building: Building, owner: Owner | undefined, name: string, mold?: Mold): [string, string][] {
+  const info: [string, string][] = [
+    ['Owner', owner?.name ?? '—'],
+    ['Location', building.location ?? '—'],
+    ['Building', name],
+    ['Period', `${formatDate(building.startDate)} → ${formatDate(building.endDate)}`],
+  ]
+  if (mold) {
+    info.push(['Floor', mold.floorName])
+    info.push(['Floor period', `${formatDate(mold.startDate)} → ${formatDate(mold.removedDate ?? mold.completedDate)}`])
+  }
+  info.push(['Bill date', formatDate(todayISO())])
+  return info
+}
+
+function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold): BillPdfSheet {
+  const bill = mold.bill!
+  const t = billTotals(bill)
+  const u = bill.unit
+  const rows: string[][] = []
+  for (const s of bill.sections) {
+    rows.push([s.name, '', '', '', ''])
+    for (const r of s.rows) {
+      if (r.l === '' && r.h === '' && r.no === '') continue
+      rows.push(['', dimDisplay(r.l, u), dimDisplay(r.h, u), `${r.no || 0} No`, areaDisplay(rowTotal(r), u)])
+    }
+    rows.push(['', '', '', `${s.name} total`, areaDisplay(sectionTotal(s), u)])
+  }
+  const summary: BillPdfSheet['summary'] = [
+    { label: 'Total area', value: `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`, strong: true },
+    { label: `Area amount — ${t.sqft} sqft × ${money(bill.rate)}`, value: money(t.areaAmount, true) },
+    ...bill.extras
+      .filter((x) => x.name && extraAmount(x) > 0)
+      .map((x) => ({ label: `${x.name} — ${x.qty || 0} × ${money(Number(x.rate) || 0)}`, value: money(extraAmount(x), true) })),
+    { label: 'TOTAL', value: money(t.total, true), strong: true },
+  ]
+  if (t.advance > 0) {
+    summary.push({ label: 'Less: advance received', value: `− ${money(t.advance, true)}` })
+    summary.push({ label: 'BALANCE DUE', value: money(t.balance, true), strong: true })
+  }
+  return {
+    title: `Centering Work Bill — ${mold.floorName}`,
+    info: sheetInfoPairs(building, owner, name, mold),
+    table: { head: ['Section', 'L', 'H', 'No.', 'Total (sqft)'], rows },
+    summary,
+  }
+}
+
+function consolidatedPdfSheet(building: Building, owner: Owner | undefined, name: string, billed: Mold[]): BillPdfSheet {
+  const totals = billed.map((m) => billTotals(m.bill!))
+  const grand = totals.reduce((s, t) => s + t.total, 0)
+  const grandAdvance = totals.reduce((s, t) => s + t.advance, 0)
+  const rows = billed.map((m) => {
+    const t = billTotals(m.bill!)
+    return [
+      m.floorName,
+      areaDisplay(t.sqft, m.bill!.unit),
+      money(t.areaAmount + t.extrasAmount, true),
+      t.advance > 0 ? money(t.advance, true) : '—',
+      money(t.total, true),
+    ]
+  })
+  const summary: BillPdfSheet['summary'] = [{ label: 'GRAND TOTAL (building)', value: money(grand, true), strong: true }]
+  if (grandAdvance > 0) {
+    summary.push({ label: 'Less: total advance received', value: `− ${money(grandAdvance, true)}` })
+    summary.push({ label: 'NET BALANCE DUE', value: money(grand - grandAdvance, true), strong: true })
+  }
+  return {
+    title: 'Consolidated Bill — Full Building',
+    info: sheetInfoPairs(building, owner, name),
+    table: { head: ['Floor', 'Area (sqft)', 'Amount', 'Advance', 'Total'], rows },
+    summary,
+  }
+}
+
+/** Web: window.print(). Native: render a portrait PDF and open the Android
+ * share/print sheet (the WebView can't open the system print dialog). */
+async function printBill(fileTitle: string, sheets: BillPdfSheet[]) {
+  if (!isNative()) {
+    window.print()
+    return
+  }
+  try {
+    const { shareBillPdf } = await import('@/lib/billPdf')
+    await shareBillPdf({ fileTitle, sheets })
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Could not create the bill PDF')
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Floor bill view — /molds/:id/bill/view                              */
 /* ------------------------------------------------------------------ */
 
@@ -239,7 +336,12 @@ export function MoldBillView() {
               </Link>
             </Button>
             {mold.bill && (
-              <Button variant="ghost" size="icon" onClick={() => window.print()} aria-label="Print">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void printBill(`Bill — ${mold.floorName}`, [floorPdfSheet(building, owner, name, mold)])}
+                aria-label="Print"
+              >
                 <Printer className="size-5" />
               </Button>
             )}
@@ -307,7 +409,17 @@ export function BuildingBillView() {
         back
         actions={
           billed.length > 0 && (
-            <Button variant="ghost" size="icon" onClick={() => window.print()} aria-label="Print">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() =>
+                void printBill(`Consolidated bill — ${name}`, [
+                  consolidatedPdfSheet(building, owner, name, billed),
+                  ...billed.map((m) => floorPdfSheet(building, owner, name, m)),
+                ])
+              }
+              aria-label="Print"
+            >
               <Printer className="size-5" />
             </Button>
           )

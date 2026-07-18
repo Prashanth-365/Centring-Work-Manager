@@ -147,12 +147,19 @@ export function BillEditor() {
     const s = bill.sections.find((x) => x.id === sid)
     if (!s) return
     const focus = (fid: string) => {
-      // after state updates flush
-      requestAnimationFrame(() => {
+      // The target input may not be rendered yet (new row) — retry briefly so
+      // the mobile keyboard's Next lands on it instead of the next form field.
+      let tries = 0
+      const attempt = () => {
         const el = document.getElementById(fid) as HTMLInputElement | null
-        el?.focus()
-        el?.select()
-      })
+        if (el) {
+          el.focus()
+          el.select?.()
+        } else if (tries++ < 10) {
+          requestAnimationFrame(attempt)
+        }
+      }
+      requestAnimationFrame(attempt)
     }
     if (field === 'l') return focus(`bl-${sid}-${idx}-h`)
     if (field === 'h') return focus(`bl-${sid}-${idx}-no`)
@@ -283,14 +290,15 @@ export function BillEditor() {
                   <span />
                 </div>
                 {s.rows.map((r, ri) => (
-                  <div key={ri} className="mb-1.5 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
+                  <div key={`${ri}-${s.rows.length}`} className="mb-1.5 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
                     <div>
                       <Input
                         id={`bl-${s.id}-${ri}-l`}
                         inputMode="decimal"
+                        enterKeyHint="next"
                         className="h-9 text-center"
                         defaultValue={dimEntry(r.l, unit)}
-                        key={`l-${unit}-${r.l}`}
+                        key={`l-${unit}`}
                         onChange={(e) =>
                           patchSection(s.id, (x) => ({
                             ...x,
@@ -307,9 +315,10 @@ export function BillEditor() {
                       <Input
                         id={`bl-${s.id}-${ri}-h`}
                         inputMode="decimal"
+                        enterKeyHint="next"
                         className="h-9 text-center"
                         defaultValue={dimEntry(r.h, unit)}
-                        key={`h-${unit}-${r.h}`}
+                        key={`h-${unit}`}
                         onChange={(e) =>
                           patchSection(s.id, (x) => ({
                             ...x,
@@ -326,6 +335,7 @@ export function BillEditor() {
                       id={`bl-${s.id}-${ri}-no`}
                       type="number"
                       inputMode="numeric"
+                      enterKeyHint="next"
                       className="h-9 text-center"
                       value={r.no === '' ? '' : String(r.no)}
                       onChange={(e) =>
