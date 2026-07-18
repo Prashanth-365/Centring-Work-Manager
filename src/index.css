@@ -204,3 +204,40 @@
     text-align: left;
   }
 }
+
+/* ---------------------------------------------------------------- */
+/* Measurement-bill print (screens/bills). PORTRAIT — the bill views  */
+/* inject an overriding @page via usePortraitPrint(). Everything but  */
+/* the sheet is hidden; the .bill-print-table thead/tfoot repeat the  */
+/* company head + signature foot on every page.                       */
+/* ---------------------------------------------------------------- */
+@media print {
+  body:has(.bill-print-area) header,
+  body:has(.bill-print-area) .print-hide {
+    display: none !important;
+  }
+  .bill-print-area {
+    max-width: none !important;
+    padding: 0 !important;
+    color: #000;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .bill-print-area > div {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+  }
+  .bill-page-break {
+    break-before: page;
+    border-top: none !important;
+    padding-top: 0 !important;
+  }
+  .bill-print-table > thead > tr > td {
+    padding-bottom: 8px;
+  }
+  .bill-print-table > tfoot > tr > td {
+    padding-top: 8px;
+  }
+}

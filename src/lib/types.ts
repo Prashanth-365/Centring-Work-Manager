@@ -53,6 +53,48 @@ export interface Building {
   updatedAt: number
 }
 
+/** Measurement-bill units: decimal feet, or feet-inches entry (2.11 = 2' 11"). */
+export type BillUnit = 'dec' | 'ftin'
+
+/** One measurement row: L × H × No. Dimensions are ALWAYS stored as decimal feet
+ * (ft-in entry is converted on input). Empty string = not yet entered. */
+export interface BillRow {
+  l: number | ''
+  h: number | ''
+  no: number | ''
+}
+
+/** A named measurement section (Plinth, Sajja Nintel, Roof Slab, …). */
+export interface BillSection {
+  id: string
+  name: string
+  rows: BillRow[]
+  collapsed?: boolean
+}
+
+/** Extra line item billed as qty × rate (Steps, Column Gabdi, …). */
+export interface BillExtra {
+  name: string
+  qty: number | ''
+  rate: number | ''
+}
+
+/** The measurement bill for one mold/floor. Stored inline on the mold (not a
+ * separate table) so it travels with backups automatically. Saving a bill
+ * syncs `mold.billAmount` (grand total) + `mold.sqft` (total area), which the
+ * auto-derived payment status and receivables already consume. */
+export interface MoldBill {
+  /** ₹ per sqft applied to the summed section area. */
+  rate: number
+  unit: BillUnit
+  sections: BillSection[]
+  extras: BillExtra[]
+  /** Advance deducted on the printed bill. Defaults from the assigned
+   * OwnerReceipt txns for the mold but is user-editable. */
+  advance: number
+  updatedAt: number
+}
+
 /** A mold is exactly one floor. Plinth/sump/lift/steps roll into that floor's mold. */
 export interface Mold {
   id: string
@@ -68,6 +110,9 @@ export interface Mold {
   sqft?: number
   billAmount?: number
   billPdfLink?: string
+  /** In-app measurement bill (§bill). Optional — molds may instead only carry
+   * a billAmount + billPdfLink entered manually. */
+  bill?: MoldBill
   workStatus: MoldWorkStatus
   paymentStatus: MoldPaymentStatus
   notes?: string

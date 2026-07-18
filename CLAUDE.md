@@ -156,7 +156,26 @@ PDF (jspdf + jspdf-autotable), writes it to the app **Cache** dir (`@capacitor/f
 that file to the Android share/print sheet (`@capacitor/share`). Sharing from **Cache** (not a public
 Downloads path) is the fix for the `FileUriExposedException` that previously broke native print.
 
-**Period selector (`components/PeriodSelector` + `PeriodPicker`):** a Week / Month / Year selector with
+**Measurement bills (`compute/bill.ts` + `screens/bills/`):** a floor's bill is stored **inline on the
+mold** (`Mold.bill: MoldBill`) so it rides along with backups/sync automatically. A bill = ordered,
+collapsible/reorderable **sections** (Slab, Beams, Columns…), each with L×H×No rows, plus flat-amount
+**extras**, a `ratePerSqft` (prefilled from the building), and an optional **advance deduction** (manual
+or referencing tracked receipts via `receiptsForMold()`). Measurements accept **decimal or ft-in** entry
+(`2.11` = 2′ 11″, inches capped at 11, toggle per bill); raw dims are never rounded — only **row/section
+totals round UP to the nearest 0.25 sqft** (`quarterUp()`). All math is pure & unit-tested
+(`compute/bill.test.ts`). Saving goes through **`repo.saveMoldBill()`**, which persists the bill and
+**syncs `mold.billAmount` + `mold.sqft`** from `billTotals()` — so payment status, outstanding, and all
+existing money flows pick the bill up with zero special-casing. Screens: **`BillEditor`**
+(`/molds/:id/bill`, focused route without bottom nav) to create/update, **`MoldBillView`**
+(`/molds/:id/bill/view`) and **`BuildingBillView`** (`/buildings/:id/bill`, consolidated roll-up of all
+floor bills + building grand total) to view/print. Print uses `<thead>/<tfoot>` on `.bill-print-table`
+so the company head + signature foot repeat on every page; bills print **portrait** (a
+`usePortraitPrint()` hook injects an `@page` override, since the global print sheet is landscape for the
+weekly register). Entry points: a bill icon + "Consolidated bill" action on **BuildingDetail**, and a
+bill icon + Bill/Create-bill button beside the dates on **MoldDetail**. The pre-existing external
+**`billPdfLink`** (open a Drive/PDF link) is kept intact on both MoldDetail and the bill editor.
+
+**Period selector (`components/PeriodSelector` + `PeriodPicker`):**
 prev/next steps; tapping the label opens a picker (calendar week-picker, month grid, or decade year
 grid, defaulting to the current period). Used by the Dashboard money/overhead sections and the profit
 breakdown; the chosen `Period` (`compute`/`dates.ts` helpers) scopes those figures.

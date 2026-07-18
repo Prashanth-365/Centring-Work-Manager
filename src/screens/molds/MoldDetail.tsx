@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { CalendarRange, ClipboardList, ExternalLink, Pencil } from 'lucide-react'
+import { CalendarRange, ClipboardList, ExternalLink, FileText, Pencil } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { StatusPill } from '@/components/StatusPill'
 import { Stat } from '@/components/Stat'
@@ -63,11 +63,18 @@ export function MoldDetail() {
         subtitle={buildingName(building, byId(owner ? [owner] : []))}
         back
         actions={
-          <Button asChild variant="ghost" size="icon">
-            <Link to={`/molds/${mold.id}/edit`} aria-label="Edit">
-              <Pencil className="size-5" />
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={mold.bill ? `/molds/${mold.id}/bill/view` : `/molds/${mold.id}/bill`} aria-label="Bill">
+                <FileText className="size-5" />
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={`/molds/${mold.id}/edit`} aria-label="Edit">
+                <Pencil className="size-5" />
+              </Link>
+            </Button>
+          </>
         }
       />
       <div className="space-y-4 p-4">
@@ -77,10 +84,18 @@ export function MoldDetail() {
           {mold.sqft != null && <span className="text-sm text-muted-foreground">{mold.sqft} sqft</span>}
         </div>
 
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <CalendarRange className="size-4" />
-          {formatDate(mold.startDate)} → {formatDate(mold.completedDate)} → {formatDate(mold.removedDate)}
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <CalendarRange className="size-4" />
+            {formatDate(mold.startDate)} → {formatDate(mold.completedDate)} → {formatDate(mold.removedDate)}
+          </p>
+          <Button asChild variant="outline" size="sm" className="shrink-0">
+            <Link to={mold.bill ? `/molds/${mold.id}/bill/view` : `/molds/${mold.id}/bill`}>
+              <FileText className="size-4" />
+              {mold.bill ? 'Bill' : 'Create bill'}
+            </Link>
+          </Button>
+        </div>
 
         <div className="grid grid-cols-3 gap-2.5">
           <Stat label="Bill" value={money(mold.billAmount ?? 0)} />

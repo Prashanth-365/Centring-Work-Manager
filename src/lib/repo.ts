@@ -78,6 +78,21 @@ export async function updateMold(id: string, patch: Partial<Mold>): Promise<void
   await runAutoAdvance() // roll up building status + derived dates from molds
 }
 
+/** Save a mold's measurement bill and SYNC the derived fields the rest of the
+ * app already consumes: `billAmount` (grand total, drives the auto payment
+ * status + receivables) and `sqft` (total measured area). */
+export async function saveMoldBill(id: string, bill: NonNullable<Mold['bill']>): Promise<void> {
+  const { billTotals } = await import('./compute/bill')
+  const t = billTotals(bill)
+  await db.molds.update(id, {
+    bill: { ...bill, updatedAt: now() },
+    billAmount: t.total > 0 ? Math.round(t.total) : undefined,
+    sqft: t.sqft > 0 ? t.sqft : undefined,
+    updatedAt: now(),
+  })
+  await runAutoAdvance() // reconcile payment status from the new bill amount
+}
+
 export async function deleteMold(id: string): Promise<void> {
   await db.transaction('rw', db.molds, db.attendance, async () => {
     await db.attendance.where('moldId').equals(id).modify({ moldId: undefined })

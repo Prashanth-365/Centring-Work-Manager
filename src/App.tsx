@@ -9,6 +9,8 @@ import { BuildingDetail } from '@/screens/buildings/BuildingDetail'
 import { BuildingForm } from '@/screens/buildings/BuildingForm'
 import { MoldDetail } from '@/screens/molds/MoldDetail'
 import { MoldForm } from '@/screens/molds/MoldForm'
+import { BillEditor } from '@/screens/bills/BillEditor'
+import { BuildingBillView, MoldBillView } from '@/screens/bills/BillView'
 import { WorkersList } from '@/screens/workers/WorkersList'
 import { WorkerDetail } from '@/screens/workers/WorkerDetail'
 import { WorkerForm } from '@/screens/workers/WorkerForm'
@@ -35,6 +37,8 @@ export default function App() {
           <Route path="/buildings" element={<BuildingsList />} />
           <Route path="/buildings/:id" element={<BuildingDetail />} />
           <Route path="/molds/:id" element={<MoldDetail />} />
+          <Route path="/molds/:id/bill/view" element={<MoldBillView />} />
+          <Route path="/buildings/:id/bill" element={<BuildingBillView />} />
           <Route path="/workers" element={<WorkersList />} />
           <Route path="/workers/:id" element={<WorkerDetail />} />
           <Route path="/owners" element={<OwnersList />} />
@@ -51,6 +55,7 @@ export default function App() {
         <Route path="/buildings/:id/edit" element={<BuildingForm />} />
         <Route path="/buildings/:buildingId/molds/new" element={<MoldForm />} />
         <Route path="/molds/:id/edit" element={<MoldForm />} />
+        <Route path="/molds/:id/bill" element={<BillEditor />} />
         <Route path="/workers/new" element={<WorkerForm />} />
         <Route path="/workers/:id/edit" element={<WorkerForm />} />
         <Route path="/owners/new" element={<OwnerForm />} />

@@ -55,11 +55,18 @@ export function BuildingDetail() {
         title={name}
         back
         actions={
-          <Button asChild variant="ghost" size="icon">
-            <Link to={`/buildings/${building.id}/edit`} aria-label="Edit">
-              <Pencil className="size-5" />
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={`/buildings/${building.id}/bill`} aria-label="Consolidated bill">
+                <FileText className="size-5" />
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={`/buildings/${building.id}/edit`} aria-label="Edit">
+                <Pencil className="size-5" />
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -121,6 +128,12 @@ export function BuildingDetail() {
             <Link to={`/buildings/${building.id}/molds/new`}>
               <CirclePlus className="size-4" />
               Add floor
+            </Link>
+          </Button>
+          <Button asChild variant="secondary" className="col-span-2">
+            <Link to={`/buildings/${building.id}/bill`}>
+              <FileText className="size-4" />
+              Consolidated bill
             </Link>
           </Button>
         </div>
