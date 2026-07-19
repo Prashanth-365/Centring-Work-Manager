@@ -28,7 +28,7 @@ import { toast } from '@/lib/toast'
 import type { BillPdfSheet } from '@/lib/billPdf'
 import type { BillSection, Building, Mold, MoldBill, Owner } from '@/lib/types'
 
-const COMPANY = 'Sri Siddeshwara Swami Prassanna (SSP)'
+const COMPANY = 'Sri Siddeshwara Swami Prasanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
 const CONTACT = 'Eshwar G S — 7899041588'
 

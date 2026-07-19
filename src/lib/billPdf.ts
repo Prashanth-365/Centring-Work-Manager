@@ -29,7 +29,7 @@ export interface BillPdfSheet {
   summary: { label: string; value: string; strong?: boolean; tone?: 'primary' | 'danger' | 'success' }[]
 }
 
-const COMPANY = 'Sri Siddeshwara Swami Prassanna (SSP)'
+const COMPANY = 'Sri Siddeshwara Swami Prasanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
 const CONTACT = 'Eshwar G S — 7899041588'
 
