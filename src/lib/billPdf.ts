@@ -96,7 +96,11 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       if (i % 2 === 1) y += 13
     })
     if (sheet.info.length % 2 === 1) y += 13
-    y += 6
+    // Divider under the info grid (matches the web sheet)
+    doc.setDrawColor(51, 51, 51)
+    doc.setLineWidth(1.2)
+    doc.line(margin, y - 4, pageW - margin, y - 4)
+    y += 10
 
     // Measurements
     if (sheet.measureCols) {
@@ -113,12 +117,12 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
         let cy = startY
         for (const s of secs) {
           const body = [
-            [{ content: safe(s.name), colSpan: 7, styles: { halign: 'left' as const, fontStyle: 'bold' as const, textColor: [26, 82, 118] as [number, number, number] } }],
+            [{ content: safe(s.name), colSpan: 7, styles: { halign: 'left' as const, fontStyle: 'bold' as const, textColor: [26, 82, 118] as [number, number, number], fillColor: [247, 249, 251] as [number, number, number] } }],
             ...s.rows.map((r) => r.map(safe)),
             [
-              { content: 'Total', colSpan: 3, styles: { halign: 'right' as const, fontStyle: 'bold' as const } },
-              { content: '=', styles: { textColor: [138, 151, 163] as [number, number, number], fontSize: 7 } },
-              { content: safe(s.total), colSpan: 3, styles: { fontStyle: 'bold' as const } },
+              { content: 'Total', colSpan: 3, styles: { halign: 'right' as const, fontStyle: 'bold' as const, fillColor: [252, 253, 254] as [number, number, number] } },
+              { content: '=', styles: { textColor: [138, 151, 163] as [number, number, number], fontSize: 7, fillColor: [252, 253, 254] as [number, number, number] } },
+              { content: safe(s.total), colSpan: 3, styles: { fontStyle: 'bold' as const, fillColor: [252, 253, 254] as [number, number, number] } },
             ],
           ]
           autoTable(doc, {
@@ -126,12 +130,9 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
             startY: cy,
             margin: { left: x, top: margin, bottom: margin },
             tableWidth: colW,
-            theme: 'plain',
-            styles: { fontSize: 8.5, cellPadding: 2.5, halign: 'center', lineWidth: 0, lineColor: 240 },
+            theme: 'grid',
+            styles: { fontSize: 8.5, cellPadding: 3, halign: 'center', lineColor: [184, 198, 210], lineWidth: 0.6, textColor: [0, 0, 0] },
             columnStyles: colStyles,
-            didParseCell: (d) => {
-              d.cell.styles.lineWidth = { top: 0, right: 0, left: 0, bottom: 0.4 } as never
-            },
           })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           cy = (doc as any).lastAutoTable.finalY + 8
@@ -179,7 +180,12 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       const lineH = 15
       const pad = 10
       const boxH = pad * 2 + (sheet.recap.lines.length + 1) * lineH + 4
-      ensureSpace(boxH + 30)
+      ensureSpace(boxH + 50)
+      // Full-width rule before the recap box (grand-rule in the HTML)
+      doc.setDrawColor(51, 51, 51)
+      doc.setLineWidth(1.2)
+      doc.line(margin, y, pageW - margin, y)
+      y += 12
       doc.setDrawColor(51, 51, 51)
       doc.setLineWidth(1)
       doc.roundedRect(boxX, y, boxW, boxH, 4, 4)
@@ -205,18 +211,35 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       y += 16
     }
 
-    // Summary lines
-    ensureSpace(sheet.summary.length * 17 + 20)
+    // Summary lines (HTML .money-box: padded rows, double rule above .final)
+    ensureSpace(sheet.summary.length * 20 + 30)
+    if (!sheet.recap) {
+      // grand-rule before the money lines on the consolidated sheet
+      doc.setDrawColor(51, 51, 51)
+      doc.setLineWidth(1.2)
+      doc.line(margin, y - 6, pageW - margin, y - 6)
+      y += 10
+    }
+    let firstStrongDone = false
     sheet.summary.forEach((line) => {
+      if (line.strong && !firstStrongDone) {
+        // 3px double rule above TOTAL / GRAND TOTAL
+        doc.setDrawColor(51, 51, 51)
+        doc.setLineWidth(0.8)
+        doc.line(margin, y - 8, pageW - margin, y - 8)
+        doc.line(margin, y - 5.5, pageW - margin, y - 5.5)
+        y += 6
+        firstStrongDone = true
+      }
       doc.setFont('helvetica', line.strong ? 'bold' : 'normal')
-      doc.setFontSize(line.strong ? 11 : 9.5)
+      doc.setFontSize(line.strong ? 12.5 : 10)
       if (line.tone === 'primary') doc.setTextColor(26, 82, 118)
       else if (line.tone === 'danger') doc.setTextColor(170, 51, 51)
       else if (line.tone === 'success') doc.setTextColor(30, 122, 69)
       else doc.setTextColor(0, 0, 0)
-      doc.text(safe(line.label), margin, y)
-      doc.text(safe(line.value), pageW - margin, y, { align: 'right' })
-      y += line.strong ? 17 : 14
+      doc.text(safe(line.label), margin + 4, y)
+      doc.text(safe(line.value), pageW - margin - 4, y, { align: 'right' })
+      y += line.strong ? 22 : 18
     })
     doc.setTextColor(0, 0, 0)
 

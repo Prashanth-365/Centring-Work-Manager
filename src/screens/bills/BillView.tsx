@@ -58,7 +58,7 @@ function SheetInfo({
 }) {
   const name = buildingName(building, byId(owner ? [owner] : []))
   return (
-    <div className="bill-info grid grid-cols-1 gap-x-6 gap-y-0.5 text-[13px] sm:grid-cols-2">
+    <div className="bill-info grid grid-cols-1 gap-x-6 gap-y-0.5 border-b-2 border-foreground pb-3 text-[13px] sm:grid-cols-2">
       <p><b>Owner:</b> {owner?.name ?? '—'}</p>
       <p><b>Location:</b> {building.location ?? '—'}</p>
       <p><b>Building:</b> {name}</p>
@@ -78,25 +78,25 @@ function SheetInfo({
 function SectionTable({ s, u }: { s: BillSection; u: MoldBill['unit'] }) {
   const rows = s.rows.filter((r) => r.l !== '' || r.h !== '' || r.no !== '')
   return (
-    <table className="mb-2.5 w-full border-collapse text-[13px] [&_td]:border-b [&_td]:border-border [&_td]:px-1 [&_td]:py-1 [&_td]:text-center">
+    <table className="mb-2.5 w-full border-collapse text-[13px] [&_td]:border [&_td]:border-[#b8c6d2] [&_td]:px-2 [&_td]:py-1 [&_td]:text-center [&_td]:whitespace-nowrap">
       <tbody>
         <tr>
-          <td colSpan={7} className="!text-left font-semibold text-primary">{s.name}</td>
+          <td colSpan={7} className="bg-muted/40 !text-left font-bold text-primary">{s.name}</td>
         </tr>
         {rows.map((r, i) => (
           <tr key={i}>
             <td>{dimDisplay(r.l, u)}</td>
-            <td className="w-5 text-[11px] text-muted-foreground">X</td>
+            <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
             <td>{dimDisplay(r.h, u)}</td>
-            <td className="w-5 text-[11px] text-muted-foreground">X</td>
+            <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
             <td>{r.no || 0}</td>
-            <td className="w-6 text-[11px] text-muted-foreground">no</td>
-            <td className="tabular font-semibold">{areaDisplay(rowTotal(r), u)}</td>
+            <td className="w-6 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">no</td>
+            <td className="tabular font-bold">{areaDisplay(rowTotal(r), u)}</td>
           </tr>
         ))}
-        <tr className="font-semibold">
+        <tr className="bg-muted/20 font-bold">
           <td colSpan={3} className="!text-right">Total</td>
-          <td className="w-5 text-[11px] text-muted-foreground">=</td>
+          <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">=</td>
           <td colSpan={3}>{areaDisplay(sectionTotal(s), u)}</td>
         </tr>
       </tbody>
@@ -133,30 +133,31 @@ function FloorSheet({ building, owner, mold }: { building: Building; owner?: Own
         <div>{right.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
       </div>
 
+      <div className="border-t-2 border-foreground" />
       <div className="mx-auto max-w-[430px] rounded-md border-[1.5px] border-foreground px-3 py-1.5 text-[13.5px]">
         {bill.sections.map((s) => (
           <Row key={s.id} label={s.name} value={`= ${areaDisplay(sectionTotal(s), u)}`} />
         ))}
-        <div className="mt-1 border-t border-muted-foreground pt-1.5">
+        <div className="mt-1 border-t border-muted-foreground pt-1">
           <Row label={<b>Total area</b>} value={<b>{areaDisplay(t.sqft, u)} sqft{u === 'ftin' ? ` (${t.sqft})` : ''}</b>} />
         </div>
       </div>
 
-      <div className="space-y-1 border-t-2 border-foreground pt-2 text-[13.5px]">
+      <div className="border-t-2 border-foreground pt-1 text-[13.5px]">
         <Row label={`Area amount — ${t.sqft} sqft × ${money(bill.rate)}`} value={money(t.areaAmount, true)} />
         {bill.extras
           .filter((x) => x.name && extraAmount(x) > 0)
           .map((x, i) => (
             <Row key={i} label={`${x.name} — ${x.qty || 0} × ${money(Number(x.rate) || 0)}`} value={money(extraAmount(x), true)} />
           ))}
-        <div className="flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground pt-1.5 text-base font-extrabold text-primary">
+        <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground px-1.5 pt-2.5 text-lg font-extrabold text-primary">
           <span>TOTAL</span>
           <span className="tabular whitespace-nowrap">{money(t.total, true)}</span>
         </div>
         {t.advance > 0 && (
           <>
             <Row label="Less: advance received" value={`− ${money(t.advance, true)}`} className="text-destructive" />
-            <div className="flex items-baseline justify-between gap-3 font-bold text-success">
+            <div className="flex items-baseline justify-between gap-3 px-1.5 py-1 text-base font-bold text-success">
               <span>BALANCE DUE</span>
               <span className="tabular whitespace-nowrap">{money(t.balance, true)}</span>
             </div>
@@ -169,7 +170,7 @@ function FloorSheet({ building, owner, mold }: { building: Building; owner?: Own
 
 function Row({ label, value, className = '' }: { label: React.ReactNode; value: React.ReactNode; className?: string }) {
   return (
-    <div className={`flex items-baseline justify-between gap-3 ${className}`}>
+    <div className={`flex items-baseline justify-between gap-3 px-1.5 py-1 ${className}`}>
       <span className="min-w-0">{label}</span>
       <span className="tabular whitespace-nowrap">{value}</span>
     </div>
@@ -499,15 +500,15 @@ export function BuildingBillView() {
                     })}
                   </tbody>
                 </table>
-                <div className="space-y-1 border-t-2 border-foreground pt-2">
-                  <div className="flex items-baseline justify-between gap-3 text-base font-extrabold text-primary">
+                <div className="border-t-2 border-foreground pt-1">
+                  <div className="mt-1 flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground px-1.5 pt-2.5 text-lg font-extrabold text-primary">
                     <span>GRAND TOTAL (building)</span>
                     <span className="tabular whitespace-nowrap">{money(grand, true)}</span>
                   </div>
                   {grandAdvance > 0 && (
                     <>
                       <Row label="Less: total advance received" value={`− ${money(grandAdvance, true)}`} className="text-destructive" />
-                      <div className="flex items-baseline justify-between gap-3 font-bold text-success">
+                      <div className="flex items-baseline justify-between gap-3 px-1.5 py-1 text-base font-bold text-success">
                         <span>NET BALANCE DUE</span>
                         <span className="tabular whitespace-nowrap">{money(grand - grandAdvance, true)}</span>
                       </div>
