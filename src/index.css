@@ -234,6 +234,10 @@
     border-top: none !important;
     padding-top: 0 !important;
   }
+  /* Keep each per-section measurement table on one page (long bills). */
+  .bill-sheet table {
+    break-inside: avoid;
+  }
   .bill-print-table > thead > tr > td {
     padding-bottom: 8px;
   }

@@ -53,6 +53,9 @@ export function BillEditor() {
   const [pdfLink, setPdfLink] = React.useState('')
   const [newSection, setNewSection] = React.useState('')
   const [saving, setSaving] = React.useState(false)
+  // Per-section revision — bumped on row DELETE so the uncontrolled L/H inputs
+  // remount with fresh defaultValues; appends must NOT remount (keyboard focus).
+  const [rev, setRev] = React.useState<Record<string, number>>({})
   const loaded = React.useRef(false)
   const dragFrom = React.useRef<number | null>(null)
 
@@ -87,6 +90,14 @@ export function BillEditor() {
   const patch = (p: Partial<MoldBill>) => setBill((b) => (b ? { ...b, ...p } : b))
   const patchSection = (sid: string, f: (s: BillSection) => BillSection) =>
     patch({ sections: bill.sections.map((s) => (s.id === sid ? f(s) : s)) })
+
+  /** Android's keyboard “Next” moves focus without firing an Enter keydown, so
+   * keyNav can't intercept it — instead always keep one blank trailing row per
+   * section so Next lands on a fresh row. Blank rows are filtered everywhere. */
+  const withTrailing = (rows: BillSection['rows']): BillSection['rows'] => {
+    const last = rows[rows.length - 1]
+    return last && (last.l !== '' || last.h !== '' || last.no !== '') ? [...rows, { l: '', h: '', no: '' }] : rows
+  }
 
   function addSection(name: string) {
     const n = name.trim()
@@ -292,7 +303,7 @@ export function BillEditor() {
                   <span />
                 </div>
                 {s.rows.map((r, ri) => (
-                  <div key={`${ri}-${s.rows.length}`} className="mb-1.5 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
+                  <div key={`${ri}-${rev[s.id] ?? 0}`} className="mb-1.5 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
                     <div>
                       <Input
                         id={`bl-${s.id}-${ri}-l`}
@@ -304,7 +315,7 @@ export function BillEditor() {
                         onChange={(e) =>
                           patchSection(s.id, (x) => ({
                             ...x,
-                            rows: x.rows.map((row, i) => (i === ri ? { ...row, l: parseDim(e.target.value, unit) } : row)),
+                            rows: withTrailing(x.rows.map((row, i) => (i === ri ? { ...row, l: parseDim(e.target.value, unit) } : row))),
                           }))
                         }
                         onKeyDown={(e) => keyNav(e, s.id, ri, 'l')}
@@ -324,7 +335,7 @@ export function BillEditor() {
                         onChange={(e) =>
                           patchSection(s.id, (x) => ({
                             ...x,
-                            rows: x.rows.map((row, i) => (i === ri ? { ...row, h: parseDim(e.target.value, unit) } : row)),
+                            rows: withTrailing(x.rows.map((row, i) => (i === ri ? { ...row, h: parseDim(e.target.value, unit) } : row))),
                           }))
                         }
                         onKeyDown={(e) => keyNav(e, s.id, ri, 'h')}
@@ -343,8 +354,10 @@ export function BillEditor() {
                       onChange={(e) =>
                         patchSection(s.id, (x) => ({
                           ...x,
-                          rows: x.rows.map((row, i) =>
-                            i === ri ? { ...row, no: e.target.value === '' ? '' : Number(e.target.value) } : row,
+                          rows: withTrailing(
+                            x.rows.map((row, i) =>
+                              i === ri ? { ...row, no: e.target.value === '' ? '' : Number(e.target.value) } : row,
+                            ),
                           ),
                         }))
                       }
@@ -356,12 +369,13 @@ export function BillEditor() {
                     <button
                       type="button"
                       className="text-muted-foreground transition hover:text-destructive"
-                      onClick={() =>
+                      onClick={() => {
+                        setRev((m) => ({ ...m, [s.id]: (m[s.id] ?? 0) + 1 }))
                         patchSection(s.id, (x) => ({
                           ...x,
                           rows: x.rows.length > 1 ? x.rows.filter((_, i) => i !== ri) : [{ l: '', h: '', no: '' }],
                         }))
-                      }
+                      }}
                       aria-label="Remove row"
                     >
                       <X className="size-4" />

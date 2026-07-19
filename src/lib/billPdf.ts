@@ -47,6 +47,7 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
   const margin = 40
 
   opts.sheets.forEach((sheet, si) => {
@@ -105,6 +106,15 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     y = (doc as any).lastAutoTable.finalY + 16
 
+    // Content past the table is drawn manually — break to a fresh page instead
+    // of letting it run off the bottom (long bills were getting cropped).
+    const ensureSpace = (need: number) => {
+      if (y + need > pageH - margin) {
+        doc.addPage()
+        y = margin + 8
+      }
+    }
+
     // Boxed section-totals recap (mirrors the web layout)
     if (sheet.recap) {
       const boxW = 320
@@ -112,6 +122,7 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       const lineH = 15
       const pad = 10
       const boxH = pad * 2 + (sheet.recap.lines.length + 1) * lineH + 4
+      ensureSpace(boxH + 30)
       doc.setDrawColor(51, 51, 51)
       doc.setLineWidth(1)
       doc.roundedRect(boxX, y, boxW, boxH, 4, 4)
@@ -138,6 +149,7 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     }
 
     // Summary lines
+    ensureSpace(sheet.summary.length * 17 + 20)
     sheet.summary.forEach((line) => {
       doc.setFont('helvetica', line.strong ? 'bold' : 'normal')
       doc.setFontSize(line.strong ? 11 : 9.5)
@@ -152,7 +164,8 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     doc.setTextColor(0, 0, 0)
 
     // Signature foot
-    y = Math.max(y + 40, doc.internal.pageSize.getHeight() - 90)
+    ensureSpace(70)
+    y = Math.max(y + 40, pageH - 90)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
     doc.setLineWidth(0.5)

@@ -26,7 +26,7 @@ import { money } from '@/lib/format'
 import { isNative } from '@/lib/native'
 import { toast } from '@/lib/toast'
 import type { BillPdfSheet } from '@/lib/billPdf'
-import type { Building, Mold, Owner } from '@/lib/types'
+import type { BillSection, Building, Mold, MoldBill, Owner } from '@/lib/types'
 
 const COMPANY = 'Sri Siddeshwara Swami Prassanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
@@ -74,53 +74,67 @@ function SheetInfo({
   )
 }
 
+/** One section's mini measurement table: `L X H X n no = total` rows. */
+function SectionTable({ s, u }: { s: BillSection; u: MoldBill['unit'] }) {
+  const rows = s.rows.filter((r) => r.l !== '' || r.h !== '' || r.no !== '')
+  return (
+    <table className="mb-2.5 w-full border-collapse text-[13px] [&_td]:border-b [&_td]:border-border [&_td]:px-1 [&_td]:py-1 [&_td]:text-center">
+      <tbody>
+        <tr>
+          <td colSpan={7} className="!text-left font-semibold text-primary">{s.name}</td>
+        </tr>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            <td>{dimDisplay(r.l, u)}</td>
+            <td className="w-5 text-[11px] text-muted-foreground">X</td>
+            <td>{dimDisplay(r.h, u)}</td>
+            <td className="w-5 text-[11px] text-muted-foreground">X</td>
+            <td>{r.no || 0}</td>
+            <td className="w-6 text-[11px] text-muted-foreground">no</td>
+            <td className="tabular font-semibold">{areaDisplay(rowTotal(r), u)}</td>
+          </tr>
+        ))}
+        <tr className="font-semibold">
+          <td colSpan={3} className="!text-right">Total</td>
+          <td className="w-5 text-[11px] text-muted-foreground">=</td>
+          <td colSpan={3}>{areaDisplay(sectionTotal(s), u)}</td>
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
 /** One floor's measurement sheet (used standalone and inside the consolidated view). */
 function FloorSheet({ building, owner, mold }: { building: Building; owner?: Owner; mold: Mold }) {
   const bill = mold.bill
   if (!bill) return null
   const t = billTotals(bill)
   const u = bill.unit
+  // Balance the per-section tables into two columns (like the old paper bills).
+  const secRows = (s: (typeof bill.sections)[number]) =>
+    s.rows.filter((r) => r.l !== '' || r.h !== '' || r.no !== '').length + 2
+  const totalRows = bill.sections.reduce((a, s) => a + secRows(s), 0)
+  const colL: typeof bill.sections = []
+  const colR: typeof bill.sections = []
+  let used = 0
+  for (const s of bill.sections) {
+    if (used < totalRows / 2) {
+      colL.push(s)
+      used += secRows(s)
+    } else {
+      colR.push(s)
+    }
+  }
   return (
     <section className="bill-sheet space-y-3">
       <h2 className="bill-title text-center text-sm font-bold uppercase tracking-[0.2em]">
         Centering Work Bill — {mold.floorName}
       </h2>
       <SheetInfo building={building} owner={owner} mold={mold} />
-      <table className="w-full border-collapse text-[13px]">
-        <thead>
-          <tr className="[&>th]:border [&>th]:border-border [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:py-1 [&>th]:text-[11px] [&>th]:uppercase">
-            <th className="w-[30%] text-left">Section</th>
-            <th>L</th>
-            <th>H</th>
-            <th>No.</th>
-            <th>Total (sqft)</th>
-          </tr>
-        </thead>
-        <tbody className="[&>tr>td]:border [&>tr>td]:border-border [&>tr>td]:px-2 [&>tr>td]:py-1 [&>tr>td]:text-center">
-          {bill.sections.map((s) => (
-            <React.Fragment key={s.id}>
-              <tr>
-                <td colSpan={5} className="!text-left font-semibold text-primary">{s.name}</td>
-              </tr>
-              {s.rows
-                .filter((r) => r.l !== '' || r.h !== '' || r.no !== '')
-                .map((r, i) => (
-                  <tr key={i}>
-                    <td />
-                    <td>{dimDisplay(r.l, u)}</td>
-                    <td>{dimDisplay(r.h, u)}</td>
-                    <td>{r.no || 0} No</td>
-                    <td className="tabular">{areaDisplay(rowTotal(r), u)}</td>
-                  </tr>
-                ))}
-              <tr className="font-semibold">
-                <td colSpan={4} className="!text-right">{s.name} total</td>
-                <td className="tabular">{areaDisplay(sectionTotal(s), u)}</td>
-              </tr>
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
+      <div className="grid grid-cols-2 items-start gap-x-4">
+        <div>{colL.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
+        <div>{colR.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
+      </div>
 
       <div className="mx-auto max-w-[430px] rounded-md border-[1.5px] border-foreground px-3 py-1.5 text-[13.5px]">
         {bill.sections.map((s) => (
@@ -249,12 +263,12 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   const u = bill.unit
   const rows: string[][] = []
   for (const s of bill.sections) {
-    rows.push([s.name, '', '', '', ''])
+    rows.push([s.name, '', '', '', '', '', ''])
     for (const r of s.rows) {
       if (r.l === '' && r.h === '' && r.no === '') continue
-      rows.push(['', dimDisplay(r.l, u), dimDisplay(r.h, u), `${r.no || 0} No`, areaDisplay(rowTotal(r), u)])
+      rows.push([dimDisplay(r.l, u), 'X', dimDisplay(r.h, u), 'X', String(r.no || 0), 'no', areaDisplay(rowTotal(r), u)])
     }
-    rows.push(['', '', '', `${s.name} total`, areaDisplay(sectionTotal(s), u)])
+    rows.push(['', '', 'Total', '=', '', '', areaDisplay(sectionTotal(s), u)])
   }
   const summary: BillPdfSheet['summary'] = [
     { label: `Area amount — ${t.sqft} sqft × ${money(bill.rate)}`, value: money(t.areaAmount, true) },
@@ -270,7 +284,7 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   return {
     title: `Centering Work Bill — ${mold.floorName}`,
     info: sheetInfoPairs(building, owner, name, mold),
-    table: { head: ['Section', 'L', 'H', 'No.', 'Total (sqft)'], rows },
+    table: { head: ['L', '', 'H', '', 'No.', '', 'Total (sqft)'], rows },
     recap: {
       lines: bill.sections.map((s) => [s.name, areaDisplay(sectionTotal(s), u)] as [string, string]),
       total: ['Total area', `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`],
