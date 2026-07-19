@@ -238,6 +238,25 @@
   .bill-sheet table {
     break-inside: avoid;
   }
+  /* Measurements print in the same two columns as on screen. */
+  .bill-meas-cols {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    column-gap: 16px;
+  }
+  /* Centered page number in the bottom page margin (browser print). */
+  body:has(.bill-print-area) {
+    --bill-print: 1;
+  }
+}
+@media print {
+  @page {
+    @bottom-center {
+      content: 'Page ' counter(page) ' of ' counter(pages);
+      font-size: 9px;
+      color: #666;
+    }
+  }
   .bill-print-table > thead > tr > td {
     padding-bottom: 8px;
   }

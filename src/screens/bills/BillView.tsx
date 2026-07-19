@@ -104,36 +104,33 @@ function SectionTable({ s, u }: { s: BillSection; u: MoldBill['unit'] }) {
   )
 }
 
+/** Column rule from the old paper bills: Roof Slab always tops the RIGHT
+ * column, Roof / Roof beam right below it; everything else fills the LEFT
+ * column in order. Leftovers keep their order after the roof group. */
+function splitSections(sections: BillSection[]): { left: BillSection[]; right: BillSection[] } {
+  const isSlab = (s: BillSection) => /roof\s*slab/i.test(s.name)
+  const isRoof = (s: BillSection) => !isSlab(s) && /roof/i.test(s.name)
+  const right = [...sections.filter(isSlab), ...sections.filter(isRoof)]
+  const left = sections.filter((s) => !isSlab(s) && !isRoof(s))
+  return { left, right }
+}
+
 /** One floor's measurement sheet (used standalone and inside the consolidated view). */
 function FloorSheet({ building, owner, mold }: { building: Building; owner?: Owner; mold: Mold }) {
   const bill = mold.bill
   if (!bill) return null
   const t = billTotals(bill)
   const u = bill.unit
-  // Balance the per-section tables into two columns (like the old paper bills).
-  const secRows = (s: (typeof bill.sections)[number]) =>
-    s.rows.filter((r) => r.l !== '' || r.h !== '' || r.no !== '').length + 2
-  const totalRows = bill.sections.reduce((a, s) => a + secRows(s), 0)
-  const colL: typeof bill.sections = []
-  const colR: typeof bill.sections = []
-  let used = 0
-  for (const s of bill.sections) {
-    if (used < totalRows / 2) {
-      colL.push(s)
-      used += secRows(s)
-    } else {
-      colR.push(s)
-    }
-  }
+  const { left, right } = splitSections(bill.sections)
   return (
     <section className="bill-sheet space-y-3">
       <h2 className="bill-title text-center text-sm font-bold uppercase tracking-[0.2em]">
         Centering Work Bill — {mold.floorName}
       </h2>
       <SheetInfo building={building} owner={owner} mold={mold} />
-      <div className="grid grid-cols-2 items-start gap-x-4">
-        <div>{colL.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
-        <div>{colR.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
+      <div className="bill-meas-cols grid grid-cols-2 items-start gap-x-4">
+        <div>{left.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
+        <div>{right.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
       </div>
 
       <div className="mx-auto max-w-[430px] rounded-md border-[1.5px] border-foreground px-3 py-1.5 text-[13.5px]">
@@ -185,8 +182,10 @@ function CompanyHead({ meta }: { meta: string }) {
   return (
     <div className="bill-cohead border-b-4 border-double border-primary pb-2 text-center">
       <p className="font-serif text-xl font-extrabold tracking-wide text-primary sm:text-2xl">{COMPANY}</p>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-warning">{COMPANY_SUB}</p>
-      <p className="mt-0.5 text-[11px] font-semibold">{CONTACT}</p>
+      <div className="relative">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-warning">{COMPANY_SUB}</p>
+        <p className="right-0 top-0 text-right text-[11px] font-semibold sm:absolute">{CONTACT}</p>
+      </div>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{meta}</p>
     </div>
   )
@@ -261,15 +260,14 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   const bill = mold.bill!
   const t = billTotals(bill)
   const u = bill.unit
-  const rows: string[][] = []
-  for (const s of bill.sections) {
-    rows.push([s.name, '', '', '', '', '', ''])
-    for (const r of s.rows) {
-      if (r.l === '' && r.h === '' && r.no === '') continue
-      rows.push([dimDisplay(r.l, u), 'X', dimDisplay(r.h, u), 'X', String(r.no || 0), 'no', areaDisplay(rowTotal(r), u)])
-    }
-    rows.push(['', '', 'Total', '=', '', '', areaDisplay(sectionTotal(s), u)])
-  }
+  const { left, right } = splitSections(bill.sections)
+  const toPdfSection = (s: BillSection) => ({
+    name: s.name,
+    rows: s.rows
+      .filter((r) => r.l !== '' || r.h !== '' || r.no !== '')
+      .map((r) => [dimDisplay(r.l, u), 'X', dimDisplay(r.h, u), 'X', String(r.no || 0), 'no', areaDisplay(rowTotal(r), u)]),
+    total: areaDisplay(sectionTotal(s), u),
+  })
   const summary: BillPdfSheet['summary'] = [
     { label: `Area amount — ${t.sqft} sqft × ${money(bill.rate)}`, value: money(t.areaAmount, true) },
     ...bill.extras
@@ -284,7 +282,7 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   return {
     title: `Centering Work Bill — ${mold.floorName}`,
     info: sheetInfoPairs(building, owner, name, mold),
-    table: { head: ['L', '', 'H', '', 'No.', '', 'Total (sqft)'], rows },
+    measureCols: { left: left.map(toPdfSection), right: right.map(toPdfSection) },
     recap: {
       lines: bill.sections.map((s) => [s.name, areaDisplay(sectionTotal(s), u)] as [string, string]),
       total: ['Total area', `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`],
@@ -324,7 +322,11 @@ function consolidatedPdfSheet(building: Building, owner: Owner | undefined, name
  * share/print sheet (the WebView can't open the system print dialog). */
 async function printBill(fileTitle: string, sheets: BillPdfSheet[]) {
   if (!isNative()) {
+    // The browser uses document.title as the default “Save as PDF” file name.
+    const prev = document.title
+    document.title = fileTitle
     window.print()
+    document.title = prev
     return
   }
   try {
@@ -366,7 +368,12 @@ export function MoldBillView() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void printBill(`Bill — ${mold.floorName}`, [floorPdfSheet(building, owner, name, mold)])}
+                onClick={() =>
+                  void printBill(
+                    `${name} · ${mold.floorName} · Centering Work Bill · ${formatDate(todayISO())}`,
+                    [floorPdfSheet(building, owner, name, mold)],
+                  )
+                }
                 aria-label="Print"
               >
                 <Printer className="size-5" />
@@ -440,7 +447,7 @@ export function BuildingBillView() {
               variant="ghost"
               size="icon"
               onClick={() =>
-                void printBill(`Consolidated bill — ${name}`, [
+                void printBill(`${name} · Consolidated Bill · ${formatDate(todayISO())}`, [
                   consolidatedPdfSheet(building, owner, name, billed),
                   ...billed.map((m) => floorPdfSheet(building, owner, name, m)),
                 ])

@@ -15,7 +15,14 @@ export interface BillPdfSheet {
   title: string
   /** label/value pairs shown under the title (Owner, Location, …). */
   info: [string, string][]
-  table: { head: string[]; rows: string[][] }
+  /** Consolidated view: one flat table. */
+  table?: { head: string[]; rows: string[][] }
+  /** Floor bills: per-section `L X H X n no total` tables in two columns
+   * (Roof Slab/Roof always top-right, like the old paper bills). */
+  measureCols?: {
+    left: { name: string; rows: string[][]; total: string }[]
+    right: { name: string; rows: string[][]; total: string }[]
+  }
   /** Boxed section-totals recap (section name / area), matching the web layout. */
   recap?: { lines: [string, string][]; total: [string, string] }
   /** Bottom money lines; `strong` renders bold + slightly larger. */
@@ -61,11 +68,10 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     y += 16
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.text(safe(COMPANY_SUB).toUpperCase(), pageW / 2, y, { align: 'center' })
-    y += 11
+    doc.text(safe(COMPANY_SUB).toUpperCase().split('').join(' ').replace(/\s{3}/g, '  '), pageW / 2, y, { align: 'center' })
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(9)
-    doc.text(safe(CONTACT), pageW / 2, y, { align: 'center' })
+    doc.setFontSize(8.5)
+    doc.text(safe(CONTACT), pageW - margin, y, { align: 'right' })
     y += 8
     doc.setLineWidth(1.2)
     doc.line(margin, y, pageW - margin, y)
@@ -92,19 +98,70 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     if (sheet.info.length % 2 === 1) y += 13
     y += 6
 
-    // Measurement table
-    autoTable(doc, {
-      head: [sheet.table.head.map(safe)],
-      body: sheet.table.rows.map((r) => r.map(safe)),
-      startY: y,
-      margin: { left: margin, right: margin },
-      theme: 'grid',
-      styles: { fontSize: 8.5, cellPadding: 3, halign: 'center' },
-      headStyles: { fillColor: [26, 82, 118], textColor: 255 },
-      columnStyles: { 0: { halign: 'left' } },
-    })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    y = (doc as any).lastAutoTable.finalY + 16
+    // Measurements
+    if (sheet.measureCols) {
+      // Two independent autoTable columns, like the paper bills.
+      const colW = (pageW - margin * 2 - 14) / 2
+      const startY = y
+      const colStyles = {
+        1: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
+        3: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
+        5: { cellWidth: 18, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
+        6: { fontStyle: 'bold' as const },
+      }
+      const drawCol = (secs: NonNullable<BillPdfSheet['measureCols']>['left'], x: number) => {
+        let cy = startY
+        for (const s of secs) {
+          const body = [
+            [{ content: safe(s.name), colSpan: 7, styles: { halign: 'left' as const, fontStyle: 'bold' as const, textColor: [26, 82, 118] as [number, number, number] } }],
+            ...s.rows.map((r) => r.map(safe)),
+            [
+              { content: 'Total', colSpan: 3, styles: { halign: 'right' as const, fontStyle: 'bold' as const } },
+              { content: '=', styles: { textColor: [138, 151, 163] as [number, number, number], fontSize: 7 } },
+              { content: safe(s.total), colSpan: 3, styles: { fontStyle: 'bold' as const } },
+            ],
+          ]
+          autoTable(doc, {
+            body: body as never,
+            startY: cy,
+            margin: { left: x, top: margin, bottom: margin },
+            tableWidth: colW,
+            theme: 'plain',
+            styles: { fontSize: 8.5, cellPadding: 2.5, halign: 'center', lineWidth: 0, lineColor: 240 },
+            columnStyles: colStyles,
+            didParseCell: (d) => {
+              d.cell.styles.lineWidth = { top: 0, right: 0, left: 0, bottom: 0.4 } as never
+            },
+          })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          cy = (doc as any).lastAutoTable.finalY + 8
+        }
+        return cy
+      }
+      const pageBefore = doc.getNumberOfPages()
+      const endL = drawCol(sheet.measureCols.left, margin)
+      const pageAfterL = doc.getNumberOfPages()
+      // autoTable draws on the CURRENT page — jump back so the right column
+      // starts beside the left one, not on the overflow page.
+      doc.setPage(pageBefore)
+      const endR = drawCol(sheet.measureCols.right, margin + colW + 14)
+      const pageAfterR = doc.getNumberOfPages()
+      doc.setPage(Math.max(pageAfterL, pageAfterR))
+      y = Math.max(endL, endR) + 8
+    } else if (sheet.table) {
+      autoTable(doc, {
+        head: [sheet.table.head.map(safe)],
+        body: sheet.table.rows.map((r) => r.map(safe)),
+        startY: y,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        styles: { fontSize: 8.5, cellPadding: 3, halign: 'center' },
+        headStyles: { fillColor: [26, 82, 118], textColor: 255 },
+        columnStyles: { 0: { halign: 'left' } },
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable.finalY + 16
+    }
 
     // Content past the table is drawn manually — break to a fresh page instead
     // of letting it run off the bottom (long bills were getting cropped).
@@ -164,20 +221,37 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     doc.setTextColor(0, 0, 0)
 
     // Signature foot
-    ensureSpace(70)
-    y = Math.max(y + 40, pageH - 90)
+    ensureSpace(90)
+    y = Math.max(y + 40, pageH - 110)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
     doc.setLineWidth(0.5)
     doc.line(margin, y, margin + 140, y)
     doc.line(pageW - margin - 140, y, pageW - margin, y)
     doc.text('Owner signature', margin + 70, y + 12, { align: 'center' })
-    doc.text(`For ${COMPANY}`, pageW - margin - 70, y + 12, { align: 'center' })
+    doc.text(`For ${safe(COMPANY)}`, pageW - margin - 70, y + 12, { align: 'center' })
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(8.5)
+    doc.setTextColor(102, 102, 102)
+    doc.text('Thank you for your business!', pageW / 2, y + 30, { align: 'center' })
+    doc.setTextColor(0, 0, 0)
   })
+
+  // Centered page number on every page, below the thank-you line.
+  const pageCount = doc.getNumberOfPages()
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(120, 120, 120)
+    doc.text(`Page ${p} of ${pageCount}`, pageW / 2, pageH - 24, { align: 'center' })
+    doc.setTextColor(0, 0, 0)
+  }
 
   const dataUri = doc.output('datauristring')
   const base64 = dataUri.substring(dataUri.indexOf('base64,') + 7)
-  const filename = `centering-bill-${downloadStamp()}.pdf`
+  const safeName = opts.fileTitle.replace(/[\\/:*?"<>|]/g, '-').replace(/\s*·\s*/g, ' · ').trim()
+  const filename = `${safeName || `centering-bill-${downloadStamp()}`}.pdf`
 
   const { Filesystem, Directory } = await import('@capacitor/filesystem')
   const { Share } = await import('@capacitor/share')
