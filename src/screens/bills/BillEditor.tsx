@@ -147,17 +147,19 @@ export function BillEditor() {
     const s = bill.sections.find((x) => x.id === sid)
     if (!s) return
     const focus = (fid: string) => {
-      // The target input may not be rendered yet (new row) — retry briefly so
-      // the mobile keyboard's Next lands on it instead of the next form field.
+      // The target input may not be rendered yet (new row), and adding a row
+      // remounts the list (row keys include rows.length) which can steal the
+      // focus back — so keep re-asserting focus for a few frames until it
+      // sticks, otherwise the mobile keyboard's Next lands on the rate field.
       let tries = 0
       const attempt = () => {
         const el = document.getElementById(fid) as HTMLInputElement | null
+        if (el && document.activeElement === el) return
         if (el) {
           el.focus()
           el.select?.()
-        } else if (tries++ < 10) {
-          requestAnimationFrame(attempt)
         }
+        if (tries++ < 20) requestAnimationFrame(attempt)
       }
       requestAnimationFrame(attempt)
     }

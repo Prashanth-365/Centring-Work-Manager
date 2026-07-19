@@ -23,7 +23,7 @@ jobs:
       # Auto-incrementing versionCode + a readable versionName so Android never
       # blocks a build as a "downgrade".
       CWM_VERSION_CODE: ${{ github.run_number }}
-      CWM_VERSION_NAME: 0.2.1.${{ github.run_number }}
+      CWM_VERSION_NAME: 0.2.2.${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -28,8 +28,9 @@ import { toast } from '@/lib/toast'
 import type { BillPdfSheet } from '@/lib/billPdf'
 import type { Building, Mold, Owner } from '@/lib/types'
 
-const COMPANY = 'Sri Siddeshwara Centering Works'
+const COMPANY = 'Sri Siddeshwara Swami Prassanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
+const CONTACT = 'Eshwar G S — 7899041588'
 
 /** The global print sheet is landscape (weekly register); bills print
  * PORTRAIT — inject an overriding @page while a bill view is mounted. */
@@ -121,8 +122,16 @@ function FloorSheet({ building, owner, mold }: { building: Building; owner?: Own
         </tbody>
       </table>
 
+      <div className="mx-auto max-w-[430px] rounded-md border-[1.5px] border-foreground px-3 py-1.5 text-[13.5px]">
+        {bill.sections.map((s) => (
+          <Row key={s.id} label={s.name} value={`= ${areaDisplay(sectionTotal(s), u)}`} />
+        ))}
+        <div className="mt-1 border-t border-muted-foreground pt-1.5">
+          <Row label={<b>Total area</b>} value={<b>{areaDisplay(t.sqft, u)} sqft{u === 'ftin' ? ` (${t.sqft})` : ''}</b>} />
+        </div>
+      </div>
+
       <div className="space-y-1 border-t-2 border-foreground pt-2 text-[13.5px]">
-        <Row label={<b>Total area</b>} value={<b>{areaDisplay(t.sqft, u)} sqft{u === 'ftin' ? ` (${t.sqft})` : ''}</b>} />
         <Row label={`Area amount — ${t.sqft} sqft × ${money(bill.rate)}`} value={money(t.areaAmount, true)} />
         {bill.extras
           .filter((x) => x.name && extraAmount(x) > 0)
@@ -163,6 +172,7 @@ function CompanyHead({ meta }: { meta: string }) {
     <div className="bill-cohead border-b-4 border-double border-primary pb-2 text-center">
       <p className="font-serif text-xl font-extrabold tracking-wide text-primary sm:text-2xl">{COMPANY}</p>
       <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-warning">{COMPANY_SUB}</p>
+      <p className="mt-0.5 text-[11px] font-semibold">{CONTACT}</p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{meta}</p>
     </div>
   )
@@ -247,21 +257,24 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
     rows.push(['', '', '', `${s.name} total`, areaDisplay(sectionTotal(s), u)])
   }
   const summary: BillPdfSheet['summary'] = [
-    { label: 'Total area', value: `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`, strong: true },
     { label: `Area amount — ${t.sqft} sqft × ${money(bill.rate)}`, value: money(t.areaAmount, true) },
     ...bill.extras
       .filter((x) => x.name && extraAmount(x) > 0)
       .map((x) => ({ label: `${x.name} — ${x.qty || 0} × ${money(Number(x.rate) || 0)}`, value: money(extraAmount(x), true) })),
-    { label: 'TOTAL', value: money(t.total, true), strong: true },
+    { label: 'TOTAL', value: money(t.total, true), strong: true, tone: 'primary' as const },
   ]
   if (t.advance > 0) {
-    summary.push({ label: 'Less: advance received', value: `− ${money(t.advance, true)}` })
-    summary.push({ label: 'BALANCE DUE', value: money(t.balance, true), strong: true })
+    summary.push({ label: 'Less: advance received', value: `− ${money(t.advance, true)}`, tone: 'danger' })
+    summary.push({ label: 'BALANCE DUE', value: money(t.balance, true), strong: true, tone: 'success' })
   }
   return {
     title: `Centering Work Bill — ${mold.floorName}`,
     info: sheetInfoPairs(building, owner, name, mold),
     table: { head: ['Section', 'L', 'H', 'No.', 'Total (sqft)'], rows },
+    recap: {
+      lines: bill.sections.map((s) => [s.name, areaDisplay(sectionTotal(s), u)] as [string, string]),
+      total: ['Total area', `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`],
+    },
     summary,
   }
 }
@@ -280,10 +293,10 @@ function consolidatedPdfSheet(building: Building, owner: Owner | undefined, name
       money(t.total, true),
     ]
   })
-  const summary: BillPdfSheet['summary'] = [{ label: 'GRAND TOTAL (building)', value: money(grand, true), strong: true }]
+  const summary: BillPdfSheet['summary'] = [{ label: 'GRAND TOTAL (building)', value: money(grand, true), strong: true, tone: 'primary' as const }]
   if (grandAdvance > 0) {
-    summary.push({ label: 'Less: total advance received', value: `− ${money(grandAdvance, true)}` })
-    summary.push({ label: 'NET BALANCE DUE', value: money(grand - grandAdvance, true), strong: true })
+    summary.push({ label: 'Less: total advance received', value: `− ${money(grandAdvance, true)}`, tone: 'danger' })
+    summary.push({ label: 'NET BALANCE DUE', value: money(grand - grandAdvance, true), strong: true, tone: 'success' })
   }
   return {
     title: 'Consolidated Bill — Full Building',

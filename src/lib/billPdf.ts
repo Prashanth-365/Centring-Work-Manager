@@ -16,16 +16,30 @@ export interface BillPdfSheet {
   /** label/value pairs shown under the title (Owner, Location, …). */
   info: [string, string][]
   table: { head: string[]; rows: string[][] }
+  /** Boxed section-totals recap (section name / area), matching the web layout. */
+  recap?: { lines: [string, string][]; total: [string, string] }
   /** Bottom money lines; `strong` renders bold + slightly larger. */
-  summary: { label: string; value: string; strong?: boolean }[]
+  summary: { label: string; value: string; strong?: boolean; tone?: 'primary' | 'danger' | 'success' }[]
 }
 
-const COMPANY = 'Sri Siddeshwara Centering Works'
+const COMPANY = 'Sri Siddeshwara Swami Prassanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
+const CONTACT = 'Eshwar G S — 7899041588'
 
-/** jspdf's built-in fonts are WinAnsi — ₹ and prime marks don't render. */
+/** jspdf's built-in fonts are WinAnsi — ₹, arrows, primes, and typographic
+ * dashes/quotes render as garbage bytes, so map them to ASCII equivalents. */
 const safe = (s: string) =>
-  s.replace(/\u20B9\s?/g, 'Rs ').replace(/\u2032/g, "'").replace(/\u2033/g, '"').replace(/\u00B7/g, '-')
+  s
+    .replace(/\u20B9\s?/g, 'Rs ')
+    .replace(/\u2032/g, "'")
+    .replace(/\u2033/g, '"')
+    .replace(/\u00B7/g, '-')
+    .replace(/\u2192/g, 'to')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2212/g, '-')
+    .replace(/[^\x20-\x7E]/g, '')
 
 export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfSheet[] }): Promise<{ uri: string }> {
   const { jsPDF } = await import('jspdf')
@@ -47,6 +61,10 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.text(safe(COMPANY_SUB).toUpperCase(), pageW / 2, y, { align: 'center' })
+    y += 11
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text(safe(CONTACT), pageW / 2, y, { align: 'center' })
     y += 8
     doc.setLineWidth(1.2)
     doc.line(margin, y, pageW - margin, y)
@@ -87,14 +105,51 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     y = (doc as any).lastAutoTable.finalY + 16
 
+    // Boxed section-totals recap (mirrors the web layout)
+    if (sheet.recap) {
+      const boxW = 320
+      const boxX = (pageW - boxW) / 2
+      const lineH = 15
+      const pad = 10
+      const boxH = pad * 2 + (sheet.recap.lines.length + 1) * lineH + 4
+      doc.setDrawColor(51, 51, 51)
+      doc.setLineWidth(1)
+      doc.roundedRect(boxX, y, boxW, boxH, 4, 4)
+      let ry = y + pad + 9
+      doc.setFontSize(9.5)
+      sheet.recap.lines.forEach(([label, value]) => {
+        doc.setFont('helvetica', 'normal')
+        doc.text(safe(label), boxX + pad, ry)
+        doc.text(`= ${safe(value)}`, boxX + boxW - pad, ry, { align: 'right' })
+        ry += lineH
+      })
+      doc.setLineWidth(0.5)
+      doc.setDrawColor(153, 153, 153)
+      doc.line(boxX + pad, ry - 10, boxX + boxW - pad, ry - 10)
+      doc.setFont('helvetica', 'bold')
+      doc.text(safe(sheet.recap.total[0]), boxX + pad, ry + 2)
+      doc.text(safe(sheet.recap.total[1]), boxX + boxW - pad, ry + 2, { align: 'right' })
+      y += boxH + 14
+      // Full-width divider before the money lines
+      doc.setDrawColor(51, 51, 51)
+      doc.setLineWidth(1.2)
+      doc.line(margin, y, pageW - margin, y)
+      y += 16
+    }
+
     // Summary lines
     sheet.summary.forEach((line) => {
       doc.setFont('helvetica', line.strong ? 'bold' : 'normal')
       doc.setFontSize(line.strong ? 11 : 9.5)
+      if (line.tone === 'primary') doc.setTextColor(26, 82, 118)
+      else if (line.tone === 'danger') doc.setTextColor(170, 51, 51)
+      else if (line.tone === 'success') doc.setTextColor(30, 122, 69)
+      else doc.setTextColor(0, 0, 0)
       doc.text(safe(line.label), margin, y)
       doc.text(safe(line.value), pageW - margin, y, { align: 'right' })
       y += line.strong ? 17 : 14
     })
+    doc.setTextColor(0, 0, 0)
 
     // Signature foot
     y = Math.max(y + 40, doc.internal.pageSize.getHeight() - 90)
