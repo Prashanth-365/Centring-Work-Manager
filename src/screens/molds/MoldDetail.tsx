@@ -1,11 +1,12 @@
 import * as React from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { CalendarRange, ClipboardList, ExternalLink, FileText, Pencil } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { StatusPill } from '@/components/StatusPill'
 import { Stat } from '@/components/Stat'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
+import { DeleteButton } from '@/components/DeleteButton'
 import {
   useAttendanceForBuilding,
   useBuilding,
@@ -14,7 +15,7 @@ import {
   useTransactionsForBuilding,
   useWorkers,
 } from '@/lib/hooks'
-import { updateMold } from '@/lib/repo'
+import { updateMold, deleteMold } from '@/lib/repo'
 import { receiptsForMold } from '@/lib/compute/profit'
 import { moldDatesForStatusChange } from '@/lib/compute/status'
 import { byId, buildingName, moldOutstanding } from '@/lib/select'
@@ -31,6 +32,8 @@ export function MoldDetail() {
   const attendanceAll = useAttendanceForBuilding(mold?.buildingId)
   const workers = useWorkers()
   const workersById = React.useMemo(() => byId(workers), [workers])
+
+  const navigate = useNavigate()
 
   if (!mold) return <PageHeader title="Floor" back />
 
@@ -74,6 +77,10 @@ export function MoldDetail() {
                 <Pencil className="size-5" />
               </Link>
             </Button>
+            <DeleteButton
+              onDelete={async () => { await deleteMold(mold.id); navigate(`/buildings/${mold.buildingId}`, { replace: true }) }}
+              label="Delete floor"
+            />
           </>
         }
       />

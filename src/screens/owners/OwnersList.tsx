@@ -6,6 +6,8 @@ import { EmptyState } from '@/components/EmptyState'
 import { Thumb } from '@/components/Thumb'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DeleteButton } from '@/components/DeleteButton'
+import { deleteOwner } from '@/lib/repo'
 import { useAllMolds, useBuildings, useOwners, useTransactions } from '@/lib/hooks'
 import { groupBy } from '@/lib/select'
 import { buildingReceivable } from '@/lib/compute/profit'
@@ -69,26 +71,30 @@ export function OwnersList() {
                 0,
               )
               return (
-                <Link
-                  key={o.id}
-                  to={`/owners/${o.id}`}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
-                >
-                  <Thumb blob={o.photoThumb} name={o.name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{o.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {pluralize(obuildings.length, 'building')}
-                      {o.location ? ` · ${o.location}` : ''}
-                    </p>
-                  </div>
-                  {outstanding > 0 && (
-                    <div className="text-right">
-                      <p className="tabular text-sm font-semibold text-warning-foreground">{money(outstanding)}</p>
-                      <p className="text-[11px] text-muted-foreground">due</p>
+                <div key={o.id} className="relative">
+                  <Link
+                    to={`/owners/${o.id}`}
+                    className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                  >
+                    <Thumb blob={o.photoThumb} name={o.name} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{o.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {pluralize(obuildings.length, 'building')}
+                        {o.location ? ` · ${o.location}` : ''}
+                      </p>
                     </div>
-                  )}
-                </Link>
+                    {outstanding > 0 && (
+                      <div className="text-right">
+                        <p className="tabular text-sm font-semibold text-warning-foreground">{money(outstanding)}</p>
+                        <p className="text-[11px] text-muted-foreground">due</p>
+                      </div>
+                    )}
+                  </Link>
+                  <div className="absolute right-2 top-2">
+                    <DeleteButton onDelete={() => deleteOwner(o.id)} label="Delete owner" />
+                  </div>
+                </div>
               )
             })}
           </div>

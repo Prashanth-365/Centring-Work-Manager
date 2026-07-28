@@ -9,6 +9,8 @@ import { MoneyText } from '@/components/MoneyText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DeleteButton } from '@/components/DeleteButton'
+import { deleteBuilding } from '@/lib/repo'
 import {
   Select,
   SelectContent,
@@ -229,38 +231,42 @@ export function BuildingsList() {
           <div className="space-y-2.5">
             {filtered.map(({ b, c, name }) => {
               return (
-                <Link
-                  key={b.id}
-                  to={`/buildings/${b.id}`}
-                  className="block rounded-xl border border-border bg-card p-3.5 shadow-card transition active:scale-[0.99]"
-                >
-                  <div className="flex items-start gap-3">
-                    <Thumb blob={b.photoThumb} name={name} square />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate font-semibold">{name}</p>
-                        <StatusPill status={b.status} kind="building" />
-                      </div>
-                      {b.ratePerSqft != null && (
-                        <p className="truncate text-xs text-muted-foreground">{money(b.ratePerSqft)}/sqft</p>
-                      )}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                        {c.current && (
+                <div key={b.id} className="relative">
+                  <Link
+                    to={`/buildings/${b.id}`}
+                    className="block rounded-xl border border-border bg-card p-3.5 shadow-card transition active:scale-[0.99]"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Thumb blob={b.photoThumb} name={name} square />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate font-semibold">{name}</p>
+                          <StatusPill status={b.status} kind="building" />
+                        </div>
+                        {b.ratePerSqft != null && (
+                          <p className="truncate text-xs text-muted-foreground">{money(b.ratePerSqft)}/sqft</p>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                          {c.current && (
+                            <span className="text-muted-foreground">
+                              On <span className="font-medium text-foreground">{c.current.floorName}</span>
+                            </span>
+                          )}
                           <span className="text-muted-foreground">
-                            On <span className="font-medium text-foreground">{c.current.floorName}</span>
+                            Margin <MoneyText value={c.margin} className="text-xs" />
                           </span>
-                        )}
-                        <span className="text-muted-foreground">
-                          Margin <MoneyText value={c.margin} className="text-xs" />
-                        </span>
-                        {c.unpaidDoneAmount > 0 && (
-                          <Badge variant="danger">unpaid {money(c.unpaidDoneAmount)}</Badge>
-                        )}
-                        {c.receivable > 0 && <Badge variant="warning">due {money(c.receivable)}</Badge>}
+                          {c.unpaidDoneAmount > 0 && (
+                            <Badge variant="danger">unpaid {money(c.unpaidDoneAmount)}</Badge>
+                          )}
+                          {c.receivable > 0 && <Badge variant="warning">due {money(c.receivable)}</Badge>}
+                        </div>
                       </div>
                     </div>
+                  </Link>
+                  <div className="absolute right-2 top-2">
+                    <DeleteButton onDelete={() => deleteBuilding(b.id)} label="Delete building" />
                   </div>
-                </Link>
+                </div>
               )
             })}
           </div>

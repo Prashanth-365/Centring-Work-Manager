@@ -26,6 +26,8 @@ import {
   useTransactionsForBuilding,
   useWorkers,
 } from '@/lib/hooks'
+import { deleteBuilding, deleteMold } from '@/lib/repo'
+import { DeleteButton } from '@/components/DeleteButton'
 import { byId, buildingName, computeBuilding, moldOutstanding } from '@/lib/select'
 import { receiptsForMold } from '@/lib/compute/profit'
 import { formatDate } from '@/lib/dates'
@@ -66,6 +68,10 @@ export function BuildingDetail() {
                 <Pencil className="size-5" />
               </Link>
             </Button>
+            <DeleteButton
+              onDelete={async () => { await deleteBuilding(building.id); navigate('/buildings', { replace: true }) }}
+              label="Delete building"
+            />
           </>
         }
       />
@@ -167,31 +173,35 @@ export function BuildingDetail() {
                 const received = receiptsForMold(m.id, txns)
                 const outstanding = moldOutstanding(m, txns)
                 return (
-                  <Link
-                    key={m.id}
-                    to={`/molds/${m.id}`}
-                    className="block rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate font-medium">{m.floorName}</p>
-                      {m.billPdfLink && <FileText className="size-4 shrink-0 text-primary" />}
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <StatusPill status={m.workStatus} kind="work" />
-                      <StatusPill status={m.paymentStatus} kind="payment" />
-                      {m.sqft != null && (
-                        <Badge variant="outline">{m.sqft} sqft</Badge>
-                      )}
-                    </div>
-                    {(m.billAmount != null || received > 0) && (
-                      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                        <span>
-                          Bill {money(m.billAmount ?? 0)} · Recd {money(received)}
-                        </span>
-                        {outstanding > 0 && <span className="font-medium text-destructive">Due {money(outstanding)}</span>}
+                  <div key={m.id} className="relative">
+                    <Link
+                      to={`/molds/${m.id}`}
+                      className="block rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate font-medium">{m.floorName}</p>
+                        {m.billPdfLink && <FileText className="size-4 shrink-0 text-primary" />}
                       </div>
-                    )}
-                  </Link>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <StatusPill status={m.workStatus} kind="work" />
+                        <StatusPill status={m.paymentStatus} kind="payment" />
+                        {m.sqft != null && (
+                          <Badge variant="outline">{m.sqft} sqft</Badge>
+                        )}
+                      </div>
+                      {(m.billAmount != null || received > 0) && (
+                        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            Bill {money(m.billAmount ?? 0)} · Recd {money(received)}
+                          </span>
+                          {outstanding > 0 && <span className="font-medium text-destructive">Due {money(outstanding)}</span>}
+                        </div>
+                      )}
+                    </Link>
+                    <div className="absolute right-2 top-2">
+                      <DeleteButton onDelete={() => deleteMold(m.id)} label="Delete floor" />
+                    </div>
+                  </div>
                 )
               })}
             </div>

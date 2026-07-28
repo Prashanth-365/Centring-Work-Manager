@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ClipboardList, Pencil, Phone, UtensilsCrossed, Wallet } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Thumb } from '@/components/Thumb'
@@ -9,6 +9,8 @@ import { EmptyState } from '@/components/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { DeleteButton } from '@/components/DeleteButton'
+import { deleteWorker } from '@/lib/repo'
 import {
   useAllMolds,
   useAttendanceForWorker,
@@ -46,6 +48,7 @@ export function WorkerDetail() {
   const ownersById = React.useMemo(() => byId(owners), [owners])
   const moldsById = React.useMemo(() => byId(molds), [molds])
 
+  const navigate = useNavigate()
   if (!worker) return <PageHeader title="Worker" back />
   const ws = (settings.weekStartsOn ?? 1) as WeekStart
   const bal = workerBalance(worker, attendance, txns, ws)
@@ -67,11 +70,17 @@ export function WorkerDetail() {
         subtitle={worker.type}
         back
         actions={
-          <Button asChild variant="ghost" size="icon">
-            <Link to={`/workers/${worker.id}/edit`} aria-label="Edit">
-              <Pencil className="size-5" />
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={`/workers/${worker.id}/edit`} aria-label="Edit">
+                <Pencil className="size-5" />
+              </Link>
+            </Button>
+            <DeleteButton
+              onDelete={async () => { await deleteWorker(worker.id); navigate('/workers', { replace: true }) }}
+              label="Delete worker"
+            />
+          </>
         }
       />
       <div className="space-y-4 p-4">

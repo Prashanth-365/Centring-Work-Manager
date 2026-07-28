@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Building2, MapPin, Pencil, Phone } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Thumb } from '@/components/Thumb'
@@ -7,6 +7,8 @@ import { Stat } from '@/components/Stat'
 import { StatusPill } from '@/components/StatusPill'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
+import { DeleteButton } from '@/components/DeleteButton'
+import { deleteOwner } from '@/lib/repo'
 import { useAllMolds, useBuildings, useOwner, useTransactions } from '@/lib/hooks'
 import { byId, buildingName, groupBy } from '@/lib/select'
 import { buildingReceivable, receiptsForBuilding } from '@/lib/compute/profit'
@@ -20,6 +22,7 @@ export function OwnerDetail() {
   const txns = useTransactions()
   const moldsByBuilding = React.useMemo(() => groupBy(molds, (m) => m.buildingId), [molds])
 
+  const navigate = useNavigate()
   if (!owner) return <PageHeader title="Owner" back />
 
   const ownersById = byId([owner])
@@ -37,11 +40,17 @@ export function OwnerDetail() {
         subtitle={owner.location}
         back
         actions={
-          <Button asChild variant="ghost" size="icon">
-            <Link to={`/owners/${owner.id}/edit`} aria-label="Edit">
-              <Pencil className="size-5" />
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="ghost" size="icon">
+              <Link to={`/owners/${owner.id}/edit`} aria-label="Edit">
+                <Pencil className="size-5" />
+              </Link>
+            </Button>
+            <DeleteButton
+              onDelete={async () => { await deleteOwner(owner.id); navigate('/owners', { replace: true }) }}
+              label="Delete owner"
+            />
+          </>
         }
       />
       <div className="space-y-4 p-4">

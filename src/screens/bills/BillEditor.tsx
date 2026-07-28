@@ -295,7 +295,8 @@ export function BillEditor() {
 
             {!s.collapsed && (
               <div className="p-2.5">
-                <div className="mb-1 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <div className="mb-1 grid grid-cols-[1.5rem_1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span />
                   <span>L</span>
                   <span>H / B</span>
                   <span>No.</span>
@@ -303,7 +304,21 @@ export function BillEditor() {
                   <span />
                 </div>
                 {s.rows.map((r, ri) => (
-                  <div key={`${ri}-${rev[s.id] ?? 0}`} className="mb-1.5 grid grid-cols-[1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
+                  <div key={`${ri}-${rev[s.id] ?? 0}`} className="mb-1.5 grid grid-cols-[1.5rem_1fr_1fr_4rem_4.5rem_2rem] items-center gap-1.5">
+                    <button
+                      type="button"
+                      className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
+                      aria-label="Insert row above"
+                      onClick={() => {
+                        setRev((m) => ({ ...m, [s.id]: (m[s.id] ?? 0) + 1 }))
+                        patchSection(s.id, (x) => ({
+                          ...x,
+                          rows: [...x.rows.slice(0, ri), { l: '', h: '', no: '' }, ...x.rows.slice(ri)],
+                        }))
+                      }}
+                    >
+                      <Plus className="size-3.5" />
+                    </button>
                     <div>
                       <Input
                         id={`bl-${s.id}-${ri}-l`}

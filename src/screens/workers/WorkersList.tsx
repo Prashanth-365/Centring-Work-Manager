@@ -8,6 +8,8 @@ import { MoneyText } from '@/components/MoneyText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DeleteButton } from '@/components/DeleteButton'
+import { deleteWorker } from '@/lib/repo'
 import {
   Select,
   SelectContent,
@@ -198,27 +200,31 @@ export function WorkersList() {
           <div className="space-y-2">
             {filtered.map(({ w, bal }) => {
               return (
-                <Link
-                  key={w.id}
-                  to={`/workers/${w.id}`}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
-                >
-                  <Thumb blob={w.photoThumb} name={w.name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{w.name}</p>
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Badge variant="muted">{w.type}</Badge>
-                      {!w.active && <Badge variant="outline">Inactive</Badge>}
-                      {money(currentWage(w))}/day
-                    </p>
+                <div key={w.id} className="relative">
+                  <Link
+                    to={`/workers/${w.id}`}
+                    className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                  >
+                    <Thumb blob={w.photoThumb} name={w.name} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{w.name}</p>
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Badge variant="muted">{w.type}</Badge>
+                        {!w.active && <Badge variant="outline">Inactive</Badge>}
+                        {money(currentWage(w))}/day
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <MoneyText value={bal.balance} balance className="text-sm" />
+                      <p className="text-[11px] text-muted-foreground">
+                        {bal.balance > 0.5 ? 'you owe' : bal.balance < -0.5 ? 'advance' : 'settled'}
+                      </p>
+                    </div>
+                  </Link>
+                  <div className="absolute right-2 top-2">
+                    <DeleteButton onDelete={() => deleteWorker(w.id)} label="Delete worker" />
                   </div>
-                  <div className="text-right">
-                    <MoneyText value={bal.balance} balance className="text-sm" />
-                    <p className="text-[11px] text-muted-foreground">
-                      {bal.balance > 0.5 ? 'you owe' : bal.balance < -0.5 ? 'advance' : 'settled'}
-                    </p>
-                  </div>
-                </Link>
+                </div>
               )
             })}
           </div>

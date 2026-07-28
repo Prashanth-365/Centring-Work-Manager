@@ -28,6 +28,115 @@ import { toast } from '@/lib/toast'
 import type { BillPdfSheet } from '@/lib/billPdf'
 import type { BillSection, Building, Mold, MoldBill, Owner } from '@/lib/types'
 
+/* ------------------------------------------------------------------ */
+/* Layout designer types                                               */
+/* ------------------------------------------------------------------ */
+
+/** Maps sectionId → 'left' | 'right'. Sections not in the map fall back to
+ * the auto-split rule (roof slab / roof → right, everything else → left). */
+export type LayoutMap = Record<string, 'left' | 'right'>
+
+function defaultLayoutMap(sections: BillSection[]): LayoutMap {
+  const map: LayoutMap = {}
+  const isSlab = (s: BillSection) => /roof\s*slab/i.test(s.name)
+  const isRoof = (s: BillSection) => !isSlab(s) && /roof/i.test(s.name)
+  for (const s of sections) {
+    map[s.id] = isSlab(s) || isRoof(s) ? 'right' : 'left'
+  }
+  return map
+}
+
+/** On-screen controls panel; hidden during print. */
+function PrintControls({
+  sections,
+  layoutMap,
+  onLayout,
+  fontSize,
+  onFontSize,
+  rowPad,
+  onRowPad,
+}: {
+  sections: BillSection[]
+  layoutMap: LayoutMap
+  onLayout: (m: LayoutMap) => void
+  fontSize: number
+  onFontSize: (v: number) => void
+  rowPad: number
+  onRowPad: (v: number) => void
+}) {
+  function toggle(id: string) {
+    onLayout({ ...layoutMap, [id]: layoutMap[id] === 'left' ? 'right' : 'left' })
+  }
+  return (
+    <div className="print-hide mb-4 space-y-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Print layout designer</p>
+
+      {/* Section column chips */}
+      <div className="flex flex-wrap gap-2">
+        {sections.map((s) => {
+          const side = layoutMap[s.id] ?? 'left'
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => toggle(s.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                side === 'right'
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-muted text-foreground'
+              }`}
+            >
+              {s.name} → {side === 'left' ? '← L' : 'R →'}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Font size */}
+      <div className="flex items-center gap-3">
+        <span className="w-24 text-xs text-muted-foreground">Font size: {fontSize}px</span>
+        <input
+          type="range"
+          min={9}
+          max={16}
+          step={0.5}
+          value={fontSize}
+          onChange={(e) => onFontSize(Number(e.target.value))}
+          className="flex-1"
+        />
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline"
+          onClick={() => onFontSize(13)}
+        >
+          reset
+        </button>
+      </div>
+
+      {/* Row padding */}
+      <div className="flex items-center gap-3">
+        <span className="w-24 text-xs text-muted-foreground">Row spacing: {rowPad}px</span>
+        <input
+          type="range"
+          min={1}
+          max={8}
+          step={0.5}
+          value={rowPad}
+          onChange={(e) => onRowPad(Number(e.target.value))}
+          className="flex-1"
+        />
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline"
+          onClick={() => onRowPad(4)}
+        >
+          reset
+        </button>
+      </div>
+    </div>
+  )
+}
+
 const COMPANY = 'Sri Siddeshwara Swami Prasanna (SSP)'
 const COMPANY_SUB = 'Centering · Shuttering · Scaffolding Works'
 const CONTACT = 'Eshwar G S — 7899041588'
@@ -75,39 +184,44 @@ function SheetInfo({
 }
 
 /** One section's mini measurement table: `L X H X n no = total` rows. */
-function SectionTable({ s, u }: { s: BillSection; u: MoldBill['unit'] }) {
+function SectionTable({ s, u, rowPad = 4 }: { s: BillSection; u: MoldBill['unit']; rowPad?: number }) {
   const rows = s.rows.filter((r) => r.l !== '' || r.h !== '' || r.no !== '')
+  const cellStyle: React.CSSProperties = { paddingTop: rowPad, paddingBottom: rowPad }
   return (
-    <table className="mb-2.5 w-full border-collapse text-[13px] [&_td]:border [&_td]:border-[#b8c6d2] [&_td]:px-2 [&_td]:py-1 [&_td]:text-center [&_td]:whitespace-nowrap">
+    <table className="mb-2.5 w-full border-collapse [&_td]:border [&_td]:border-[#b8c6d2] [&_td]:px-2 [&_td]:text-center [&_td]:whitespace-nowrap">
       <tbody>
         <tr>
-          <td colSpan={7} className="bg-muted/40 !text-left font-bold text-primary">{s.name}</td>
+          <td colSpan={7} style={cellStyle} className="bg-muted/40 !text-left font-bold text-primary">{s.name}</td>
         </tr>
         {rows.map((r, i) => (
           <tr key={i}>
-            <td>{dimDisplay(r.l, u)}</td>
-            <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
-            <td>{dimDisplay(r.h, u)}</td>
-            <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
-            <td>{r.no || 0}</td>
-            <td className="w-6 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">no</td>
-            <td className="tabular font-bold">{areaDisplay(rowTotal(r), u)}</td>
+            <td style={cellStyle}>{dimDisplay(r.l, u)}</td>
+            <td style={cellStyle} className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
+            <td style={cellStyle}>{dimDisplay(r.h, u)}</td>
+            <td style={cellStyle} className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">X</td>
+            <td style={cellStyle}>{r.no || 0}</td>
+            <td style={cellStyle} className="w-6 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">no</td>
+            <td style={cellStyle} className="tabular font-bold">{areaDisplay(rowTotal(r), u)}</td>
           </tr>
         ))}
         <tr className="bg-muted/20 font-bold">
-          <td colSpan={3} className="!text-right">Total</td>
-          <td className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">=</td>
-          <td colSpan={3}>{areaDisplay(sectionTotal(s), u)}</td>
+          <td colSpan={3} style={cellStyle} className="!text-right">Total</td>
+          <td style={cellStyle} className="w-5 !border-x-0 !px-0.5 text-[11px] text-muted-foreground">=</td>
+          <td colSpan={3} style={cellStyle}>{areaDisplay(sectionTotal(s), u)}</td>
         </tr>
       </tbody>
     </table>
   )
 }
 
-/** Column rule from the old paper bills: Roof Slab always tops the RIGHT
- * column, Roof / Roof beam right below it; everything else fills the LEFT
- * column in order. Leftovers keep their order after the roof group. */
-function splitSections(sections: BillSection[]): { left: BillSection[]; right: BillSection[] } {
+/** Column rule: uses layoutMap when provided; falls back to the roof-slab heuristic. */
+function splitSections(sections: BillSection[], layoutMap?: LayoutMap): { left: BillSection[]; right: BillSection[] } {
+  if (layoutMap) {
+    return {
+      left: sections.filter((s) => (layoutMap[s.id] ?? 'left') === 'left'),
+      right: sections.filter((s) => (layoutMap[s.id] ?? 'left') === 'right'),
+    }
+  }
   const isSlab = (s: BillSection) => /roof\s*slab/i.test(s.name)
   const isRoof = (s: BillSection) => !isSlab(s) && /roof/i.test(s.name)
   const right = [...sections.filter(isSlab), ...sections.filter(isRoof)]
@@ -116,21 +230,35 @@ function splitSections(sections: BillSection[]): { left: BillSection[]; right: B
 }
 
 /** One floor's measurement sheet (used standalone and inside the consolidated view). */
-function FloorSheet({ building, owner, mold }: { building: Building; owner?: Owner; mold: Mold }) {
+function FloorSheet({
+  building,
+  owner,
+  mold,
+  layoutMap,
+  fontSize = 13,
+  rowPad = 4,
+}: {
+  building: Building
+  owner?: Owner
+  mold: Mold
+  layoutMap?: LayoutMap
+  fontSize?: number
+  rowPad?: number
+}) {
   const bill = mold.bill
   if (!bill) return null
   const t = billTotals(bill)
   const u = bill.unit
-  const { left, right } = splitSections(bill.sections)
+  const { left, right } = splitSections(bill.sections, layoutMap)
   return (
-    <section className="bill-sheet space-y-3">
+    <section className="bill-sheet space-y-3" style={{ fontSize }}>
       <h2 className="bill-title text-center text-sm font-bold uppercase tracking-[0.2em]">
         Centering Work Bill — {mold.floorName}
       </h2>
       <SheetInfo building={building} owner={owner} mold={mold} />
       <div className="bill-meas-cols grid grid-cols-2 items-start gap-x-4">
-        <div>{left.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
-        <div>{right.map((s) => <SectionTable key={s.id} s={s} u={u} />)}</div>
+        <div>{left.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
+        <div>{right.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
       </div>
 
       <div className="border-t-2 border-foreground" />
@@ -349,9 +477,21 @@ export function MoldBillView() {
   const building = useBuilding(mold?.buildingId)
   const owner = useOwner(building?.ownerId)
 
+  const [layoutMap, setLayoutMap] = React.useState<LayoutMap | null>(null)
+  const [fontSize, setFontSize] = React.useState(13)
+  const [rowPad, setRowPad] = React.useState(4)
+
+  // Init layoutMap once bill sections are available
+  React.useEffect(() => {
+    if (mold?.bill && layoutMap === null) {
+      setLayoutMap(defaultLayoutMap(mold.bill.sections))
+    }
+  }, [mold?.bill, layoutMap])
+
   if (!mold || !building) return <PageHeader title="Bill" back />
 
   const name = buildingName(building, byId(owner ? [owner] : []))
+  const activeSections = mold.bill?.sections ?? []
   return (
     <>
       <PageHeader
@@ -404,11 +544,29 @@ export function MoldBillView() {
             }
           />
         ) : (
-          <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
-            <PrintWrap meta={`${name} · ${mold.floorName} · ${formatDate(todayISO())}`}>
-              <FloorSheet building={building} owner={owner} mold={mold} />
-            </PrintWrap>
-          </div>
+          <>
+            <PrintControls
+              sections={activeSections}
+              layoutMap={layoutMap ?? defaultLayoutMap(activeSections)}
+              onLayout={setLayoutMap}
+              fontSize={fontSize}
+              onFontSize={setFontSize}
+              rowPad={rowPad}
+              onRowPad={setRowPad}
+            />
+            <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
+              <PrintWrap meta={`${name} · ${mold.floorName} · ${formatDate(todayISO())}`}>
+                <FloorSheet
+                  building={building}
+                  owner={owner}
+                  mold={mold}
+                  layoutMap={layoutMap ?? undefined}
+                  fontSize={fontSize}
+                  rowPad={rowPad}
+                />
+              </PrintWrap>
+            </div>
+          </>
         )}
       </div>
     </>
@@ -428,13 +586,54 @@ export function BuildingBillView() {
   const txns = useTransactionsForBuilding(id)
   void txns
 
+  // Layout state — per-floor maps keyed by mold id
+  const [layoutMaps, setLayoutMaps] = React.useState<Record<string, LayoutMap>>({})
+  const [fontSize, setFontSize] = React.useState(13)
+  const [rowPad, setRowPad] = React.useState(4)
+
+  const billed = molds.filter((m) => m.bill)
+
+  // Init each floor's layout map once
+  React.useEffect(() => {
+    setLayoutMaps((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const m of billed) {
+        if (!next[m.id] && m.bill) {
+          next[m.id] = defaultLayoutMap(m.bill.sections)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [billed.length])
+
   if (!building) return <PageHeader title="Consolidated bill" back />
 
   const name = buildingName(building, byId(owner ? [owner] : []))
-  const billed = molds.filter((m) => m.bill)
   const totals = billed.map((m) => billTotals(m.bill!))
   const grand = totals.reduce((s, t) => s + t.total, 0)
   const grandAdvance = totals.reduce((s, t) => s + t.advance, 0)
+
+  // Flat list of all sections across all floors for the layout designer
+  const allSections = billed.flatMap((m) => m.bill!.sections)
+  const combinedLayoutMap: LayoutMap = Object.assign({}, ...Object.values(layoutMaps))
+
+  function handleLayout(map: LayoutMap) {
+    // Distribute updates back to per-floor maps
+    setLayoutMaps((prev) => {
+      const next = { ...prev }
+      for (const m of billed) {
+        const floorMap = { ...prev[m.id] }
+        for (const s of m.bill!.sections) {
+          if (map[s.id] !== undefined) floorMap[s.id] = map[s.id]
+        }
+        next[m.id] = floorMap
+      }
+      return next
+    })
+  }
 
   return (
     <>
@@ -468,63 +667,81 @@ export function BuildingBillView() {
             description="Create a measurement bill on a floor first — it will roll up here."
           />
         ) : (
-          <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
-            <PrintWrap meta={`${name} · Consolidated bill · ${formatDate(todayISO())}`}>
-              <section className="space-y-3">
-                <h2 className="text-center text-sm font-bold uppercase tracking-[0.2em]">
-                  Consolidated Bill — Full Building
-                </h2>
-                <SheetInfo building={building} owner={owner} />
-                <table className="w-full border-collapse text-[13px]">
-                  <thead>
-                    <tr className="[&>th]:border [&>th]:border-border [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:py-1 [&>th]:text-[11px] [&>th]:uppercase">
-                      <th className="text-left">Floor</th>
-                      <th>Area (sqft)</th>
-                      <th>Amount</th>
-                      <th>Advance</th>
-                      <th>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="[&>tr>td]:border [&>tr>td]:border-border [&>tr>td]:px-2 [&>tr>td]:py-1 [&>tr>td]:text-center">
-                    {billed.map((m) => {
-                      const t = billTotals(m.bill!)
-                      return (
-                        <tr key={m.id}>
-                          <td className="!text-left font-medium">{m.floorName}</td>
-                          <td className="tabular">{areaDisplay(t.sqft, m.bill!.unit)}</td>
-                          <td className="tabular">{money(t.areaAmount + t.extrasAmount, true)}</td>
-                          <td className="tabular">{t.advance > 0 ? money(t.advance, true) : '—'}</td>
-                          <td className="tabular font-semibold">{money(t.total, true)}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-                <div className="border-t-2 border-foreground pt-1">
-                  <div className="mt-1 flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground px-1.5 pt-2.5 text-lg font-extrabold text-primary">
-                    <span>GRAND TOTAL (building)</span>
-                    <span className="tabular whitespace-nowrap">{money(grand, true)}</span>
+          <>
+            <PrintControls
+              sections={allSections}
+              layoutMap={combinedLayoutMap}
+              onLayout={handleLayout}
+              fontSize={fontSize}
+              onFontSize={setFontSize}
+              rowPad={rowPad}
+              onRowPad={setRowPad}
+            />
+            <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
+              <PrintWrap meta={`${name} · Consolidated bill · ${formatDate(todayISO())}`}>
+                <section className="space-y-3">
+                  <h2 className="text-center text-sm font-bold uppercase tracking-[0.2em]">
+                    Consolidated Bill — Full Building
+                  </h2>
+                  <SheetInfo building={building} owner={owner} />
+                  <table className="w-full border-collapse text-[13px]">
+                    <thead>
+                      <tr className="[&>th]:border [&>th]:border-border [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:py-1 [&>th]:text-[11px] [&>th]:uppercase">
+                        <th className="text-left">Floor</th>
+                        <th>Area (sqft)</th>
+                        <th>Amount</th>
+                        <th>Advance</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="[&>tr>td]:border [&>tr>td]:border-border [&>tr>td]:px-2 [&>tr>td]:py-1 [&>tr>td]:text-center">
+                      {billed.map((m) => {
+                        const t = billTotals(m.bill!)
+                        return (
+                          <tr key={m.id}>
+                            <td className="!text-left font-medium">{m.floorName}</td>
+                            <td className="tabular">{areaDisplay(t.sqft, m.bill!.unit)}</td>
+                            <td className="tabular">{money(t.areaAmount + t.extrasAmount, true)}</td>
+                            <td className="tabular">{t.advance > 0 ? money(t.advance, true) : '—'}</td>
+                            <td className="tabular font-semibold">{money(t.total, true)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  <div className="border-t-2 border-foreground pt-1">
+                    <div className="mt-1 flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground px-1.5 pt-2.5 text-lg font-extrabold text-primary">
+                      <span>GRAND TOTAL (building)</span>
+                      <span className="tabular whitespace-nowrap">{money(grand, true)}</span>
+                    </div>
+                    {grandAdvance > 0 && (
+                      <>
+                        <Row label="Less: total advance received" value={`− ${money(grandAdvance, true)}`} className="text-destructive" />
+                        <div className="flex items-baseline justify-between gap-3 px-1.5 py-1 text-base font-bold text-success">
+                          <span>NET BALANCE DUE</span>
+                          <span className="tabular whitespace-nowrap">{money(grand - grandAdvance, true)}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  {grandAdvance > 0 && (
-                    <>
-                      <Row label="Less: total advance received" value={`− ${money(grandAdvance, true)}`} className="text-destructive" />
-                      <div className="flex items-baseline justify-between gap-3 px-1.5 py-1 text-base font-bold text-success">
-                        <span>NET BALANCE DUE</span>
-                        <span className="tabular whitespace-nowrap">{money(grand - grandAdvance, true)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
 
-                {/* Per-floor detail sheets, each starting a new printed page */}
-                {billed.map((m) => (
-                  <div key={m.id} className="bill-page-break border-t border-dashed border-border pt-4">
-                    <FloorSheet building={building} owner={owner} mold={m} />
-                  </div>
-                ))}
-              </section>
-            </PrintWrap>
-          </div>
+                  {/* Per-floor detail sheets */}
+                  {billed.map((m) => (
+                    <div key={m.id} className="bill-page-break border-t border-dashed border-border pt-4">
+                      <FloorSheet
+                        building={building}
+                        owner={owner}
+                        mold={m}
+                        layoutMap={layoutMaps[m.id]}
+                        fontSize={fontSize}
+                        rowPad={rowPad}
+                      />
+                    </div>
+                  ))}
+                </section>
+              </PrintWrap>
+            </div>
+          </>
         )}
       </div>
     </>
