@@ -238,10 +238,19 @@
   .bill-sheet table {
     break-inside: avoid;
   }
-  /* Measurements print in the same two columns as on screen. */
+  /* Font size and row spacing are set via inline styles on .bill-sheet and td;
+     ensure print does not reset them. */
+  .bill-sheet {
+    font-size: inherit !important;
+  }
+  .bill-sheet td {
+    padding-top: inherit !important;
+    padding-bottom: inherit !important;
+  }
+  /* Measurements print in the same columns as set in the layout designer.
+     The inline style on .bill-meas-cols carries grid-template-columns. */
   .bill-meas-cols {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
     column-gap: 16px;
   }
   /* Centered page number in the bottom page margin (browser print). */
