@@ -26,7 +26,7 @@ import {
   useTransactionsForBuilding,
   useWorkers,
 } from '@/lib/hooks'
-import { deleteBuilding, deleteMold } from '@/lib/repo'
+import { deleteBuilding } from '@/lib/repo'
 import { DeleteButton } from '@/components/DeleteButton'
 import { byId, buildingName, computeBuilding, moldOutstanding } from '@/lib/select'
 import { receiptsForMold } from '@/lib/compute/profit'
@@ -198,9 +198,6 @@ export function BuildingDetail() {
                         </div>
                       )}
                     </Link>
-                    <div className="flex justify-end border-t border-border/50 px-2 py-1">
-                      <DeleteButton onDelete={() => deleteMold(m.id)} label="Delete floor" />
-                    </div>
                   </div>
                 )
               })}

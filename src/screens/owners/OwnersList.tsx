@@ -6,8 +6,6 @@ import { EmptyState } from '@/components/EmptyState'
 import { Thumb } from '@/components/Thumb'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { DeleteButton } from '@/components/DeleteButton'
-import { deleteOwner } from '@/lib/repo'
 import { useAllMolds, useBuildings, useOwners, useTransactions } from '@/lib/hooks'
 import { groupBy } from '@/lib/select'
 import { buildingReceivable } from '@/lib/compute/profit'
@@ -91,9 +89,6 @@ export function OwnersList() {
                       </div>
                     )}
                   </Link>
-                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
-                    <DeleteButton onDelete={() => deleteOwner(o.id)} label="Delete owner" />
-                  </div>
                 </div>
               )
             })}

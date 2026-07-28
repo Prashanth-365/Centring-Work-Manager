@@ -1,4 +1,5 @@
 import * as React from "react"
+import * as ReactDOM from "react-dom"
 import { Trash2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -10,27 +11,35 @@ interface DeleteButtonProps {
   className?: string
 }
 
+function Portal({ children }: { children: React.ReactNode }) {
+  return ReactDOM.createPortal(children, document.body)
+}
+
 function ConfirmDialog({ label, onConfirm, onCancel }: { label: string; onConfirm: () => void; onCancel: () => void }) {
-  function handleBackdrop(e: React.MouseEvent<HTMLDivElement>) { if (e.target === e.currentTarget) onCancel() }
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onCancel() }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [onCancel])
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={handleBackdrop}>
-      <div className="w-full max-w-xs rounded-2xl border border-border bg-card p-5 shadow-xl">
-        <div className="mb-1 flex items-center gap-2">
-          <Trash2 className="size-5 shrink-0 text-destructive" />
-          <p className="font-semibold">Delete {label}?</p>
-        </div>
-        <p className="mb-4 text-sm text-muted-foreground">You will have 5 seconds to undo after confirming.</p>
-        <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
-          <Button variant="destructive" className="flex-1" onClick={onConfirm}>Delete</Button>
+    <Portal>
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)" }}
+        onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
+      >
+        <div className="w-full max-w-xs rounded-2xl border border-border bg-card p-5 shadow-xl">
+          <div className="mb-1 flex items-center gap-2">
+            <Trash2 className="size-5 shrink-0 text-destructive" />
+            <p className="font-semibold">Delete {label}?</p>
+          </div>
+          <p className="mb-4 text-sm text-muted-foreground">This action can be undone right after.</p>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
+            <Button variant="destructive" className="flex-1" onClick={onConfirm}>Delete</Button>
+          </div>
         </div>
       </div>
-    </div>
+    </Portal>
   )
 }
 
@@ -58,16 +67,18 @@ function UndoToast({ label, onUndo, onExpire }: { label: string; onUndo: () => v
     onUndo()
   }
   return (
-    <div className="fixed bottom-20 left-1/2 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Trash2 className="size-4 shrink-0 text-destructive" />
-        <span className="min-w-0 flex-1 text-sm font-medium">{label} deleted</span>
-        <button type="button" onClick={handleUndo} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">
-          <Undo2 className="size-3.5" />Undo
-        </button>
+    <Portal>
+      <div style={{ position: "fixed", bottom: "5rem", left: "50%", transform: "translateX(-50%)", zIndex: 9999, width: "calc(100% - 2rem)", maxWidth: "24rem" }} className="overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Trash2 className="size-4 shrink-0 text-destructive" />
+          <span className="min-w-0 flex-1 text-sm font-medium">{label} deleted</span>
+          <button type="button" onClick={handleUndo} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">
+            <Undo2 className="size-3.5" />Undo
+          </button>
+        </div>
+        <div className="h-1 bg-primary" style={{ width: pct + "%", transition: "none" }} />
       </div>
-      <div className="h-1 bg-primary" style={{ width: pct + "%", transition: "none" }} />
-    </div>
+    </Portal>
   )
 }
 

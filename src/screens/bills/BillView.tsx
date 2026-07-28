@@ -31,7 +31,7 @@ import type { BillSection, Building, Mold, MoldBill, Owner } from '@/lib/types'
 /* ------------------------------------------------------------------ */
 /* Layout designer types                                               */
 /* ------------------------------------------------------------------ */
-/* Layout state — N-column array of section-id arrays                  */
+/* Layout designer types                                               */
 /* ------------------------------------------------------------------ */
 
 /** cols[colIndex] = ordered array of sectionIds in that column.
@@ -44,6 +44,46 @@ function defaultLayout(sections: BillSection[]): LayoutState {
   const left = sections.filter((s) => !isSlab(s) && !isRoof(s)).map((s) => s.id)
   const right = [...sections.filter(isSlab), ...sections.filter(isRoof)].map((s) => s.id)
   return { cols: [left, right] }
+}
+
+/* Persist layout + fontSize + rowPad in localStorage keyed per mold/building */
+interface PrintPrefs { layout: LayoutState; fontSize: number; rowPad: number }
+
+function loadPrefs(key: string): PrintPrefs | null {
+  try {
+    const raw = localStorage.getItem(`bill-layout-${key}`)
+    return raw ? (JSON.parse(raw) as PrintPrefs) : null
+  } catch { return null }
+}
+
+function savePrefs(key: string, prefs: PrintPrefs) {
+  try { localStorage.setItem(`bill-layout-${key}`, JSON.stringify(prefs)) } catch { /* ignore */ }
+}
+
+function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
+  const [layout, setLayoutRaw] = React.useState<LayoutState>(() => {
+    if (!key) return defaultLayout(sections)
+    return loadPrefs(key)?.layout ?? defaultLayout(sections)
+  })
+  const [fontSize, setFontSizeRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.fontSize ?? 13) : 13)
+  const [rowPad, setRowPadRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.rowPad ?? 4) : 4)
+
+  // When key changes (e.g. navigating between bills), load that bill's prefs
+  const prevKey = React.useRef(key)
+  React.useEffect(() => {
+    if (!key || key === prevKey.current) return
+    prevKey.current = key
+    const saved = loadPrefs(key)
+    if (saved) { setLayoutRaw(saved.layout); setFontSizeRaw(saved.fontSize); setRowPadRaw(saved.rowPad) }
+    else { setLayoutRaw(defaultLayout(sections)); setFontSizeRaw(13); setRowPadRaw(4) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  function setLayout(l: LayoutState) { setLayoutRaw(l); if (key) savePrefs(key, { layout: l, fontSize, rowPad }) }
+  function setFontSize(v: number) { setFontSizeRaw(v); if (key) savePrefs(key, { layout, fontSize: v, rowPad }) }
+  function setRowPad(v: number) { setRowPadRaw(v); if (key) savePrefs(key, { layout, fontSize, rowPad: v }) }
+
+  return { layout, setLayout, fontSize, setFontSize, rowPad, setRowPad }
 }
 
 /* ------------------------------------------------------------------ */
@@ -607,21 +647,12 @@ export function MoldBillView() {
   const building = useBuilding(mold?.buildingId)
   const owner = useOwner(building?.ownerId)
 
-  const [layout, setLayout] = React.useState<LayoutState | null>(null)
-  const [fontSize, setFontSize] = React.useState(13)
-  const [rowPad, setRowPad] = React.useState(4)
-
-  // Init layout once bill sections are available
-  React.useEffect(() => {
-    if (mold?.bill && layout === null) {
-      setLayout(defaultLayout(mold.bill.sections))
-    }
-  }, [mold?.bill, layout])
+  const sections = mold?.bill?.sections ?? []
+  const { layout, setLayout, fontSize, setFontSize, rowPad, setRowPad } = usePrintPrefs(id, sections)
 
   if (!mold || !building) return <PageHeader title="Bill" back />
 
   const name = buildingName(building, byId(owner ? [owner] : []))
-  const activeSections = mold.bill?.sections ?? []
   return (
     <>
       <PageHeader
@@ -676,8 +707,8 @@ export function MoldBillView() {
         ) : (
           <>
             <PrintControls
-              sections={activeSections}
-              layout={layout ?? defaultLayout(activeSections)}
+              sections={sections}
+              layout={layout}
               onLayout={setLayout}
               fontSize={fontSize}
               onFontSize={setFontSize}
@@ -690,7 +721,7 @@ export function MoldBillView() {
                   building={building}
                   owner={owner}
                   mold={mold}
-                  layout={layout ?? undefined}
+                  layout={layout}
                   fontSize={fontSize}
                   rowPad={rowPad}
                 />
@@ -716,21 +747,23 @@ export function BuildingBillView() {
   const txns = useTransactionsForBuilding(id)
   void txns
 
-  // Layout state — per-floor maps keyed by mold id
-  const [layouts, setLayouts] = React.useState<Record<string, LayoutState>>({})
-  const [fontSize, setFontSize] = React.useState(13)
-  const [rowPad, setRowPad] = React.useState(4)
-
   const billed = molds.filter((m) => m.bill)
+  const allSections = billed.flatMap((m) => m.bill!.sections)
 
-  // Init each floor's layout once
+  // Shared prefs persisted under the building id (consolidated view)
+  const { layout: sharedLayout, setLayout: setSharedLayout, fontSize, setFontSize, rowPad, setRowPad } =
+    usePrintPrefs(id ? `building-${id}` : undefined, allSections)
+
+  // Per-floor layout — each floor loads/saves independently
+  const [floorLayouts, setFloorLayouts] = React.useState<Record<string, LayoutState>>({})
+
   React.useEffect(() => {
-    setLayouts((prev) => {
+    setFloorLayouts((prev) => {
       const next = { ...prev }
       let changed = false
       for (const m of billed) {
         if (!next[m.id] && m.bill) {
-          next[m.id] = defaultLayout(m.bill.sections)
+          next[m.id] = loadPrefs(m.id)?.layout ?? defaultLayout(m.bill.sections)
           changed = true
         }
       }
@@ -739,38 +772,30 @@ export function BuildingBillView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [billed.length])
 
+  function handleLayout(newLayout: LayoutState) {
+    setSharedLayout(newLayout)
+    // Distribute same column structure per floor
+    setFloorLayouts((prev) => {
+      const next = { ...prev }
+      for (const m of billed) {
+        const secs = m.bill!.sections
+        const floorCols = newLayout.cols.map((col) =>
+          col.map((sid) => secs.find((s) => s.id === sid)?.id).filter(Boolean) as string[]
+        )
+        const updated = { cols: floorCols }
+        next[m.id] = updated
+        savePrefs(m.id, { layout: updated, fontSize, rowPad })
+      }
+      return next
+    })
+  }
+
   if (!building) return <PageHeader title="Consolidated bill" back />
 
   const name = buildingName(building, byId(owner ? [owner] : []))
   const totals = billed.map((m) => billTotals(m.bill!))
   const grand = totals.reduce((s, t) => s + t.total, 0)
   const grandAdvance = totals.reduce((s, t) => s + t.advance, 0)
-
-  // Flat list of all sections across all floors for the layout designer
-  const allSections = billed.flatMap((m) => m.bill!.sections)
-  // For the consolidated view, show a single combined layout designer using the first floor's layout
-  // but apply per-floor when rendering each floor sheet
-  const sharedLayout: LayoutState = layouts[billed[0]?.id] ?? defaultLayout(allSections)
-
-  function handleLayout(newLayout: LayoutState) {
-    // Apply the same column structure to all floors, matching by section name
-    setLayouts((prev) => {
-      const next = { ...prev }
-      for (const m of billed) {
-        const secs = m.bill!.sections
-        // Map column structure: match section ids by position in each column using name lookup
-        const floorCols = newLayout.cols.map((col) =>
-          col.map((sid) => {
-            // Find this section in this floor by same id (if cross-floor designer, fallback to name match)
-            const direct = secs.find((s) => s.id === sid)
-            return direct?.id
-          }).filter(Boolean) as string[]
-        )
-        next[m.id] = { cols: floorCols }
-      }
-      return next
-    })
-  }
 
   return (
     <>
@@ -808,8 +833,7 @@ export function BuildingBillView() {
             <PrintControls
               sections={allSections}
               layout={sharedLayout}
-              onLayout={handleLayout}
-              fontSize={fontSize}
+              onLayout={handleLayout}              fontSize={fontSize}
               onFontSize={setFontSize}
               rowPad={rowPad}
               onRowPad={setRowPad}
@@ -869,7 +893,7 @@ export function BuildingBillView() {
                         building={building}
                         owner={owner}
                         mold={m}
-                        layout={layouts[m.id]}
+                        layout={floorLayouts[m.id]}
                         fontSize={fontSize}
                         rowPad={rowPad}
                       />

@@ -8,8 +8,6 @@ import { MoneyText } from '@/components/MoneyText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { DeleteButton } from '@/components/DeleteButton'
-import { deleteWorker } from '@/lib/repo'
 import {
   Select,
   SelectContent,
@@ -221,9 +219,6 @@ export function WorkersList() {
                       </p>
                     </div>
                   </Link>
-                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
-                    <DeleteButton onDelete={() => deleteWorker(w.id)} label="Delete worker" />
-                  </div>
                 </div>
               )
             })}

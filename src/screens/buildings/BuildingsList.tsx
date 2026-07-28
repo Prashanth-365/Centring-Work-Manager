@@ -9,8 +9,6 @@ import { MoneyText } from '@/components/MoneyText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { DeleteButton } from '@/components/DeleteButton'
-import { deleteBuilding } from '@/lib/repo'
 import {
   Select,
   SelectContent,
@@ -263,9 +261,6 @@ export function BuildingsList() {
                       </div>
                     </div>
                   </Link>
-                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
-                    <DeleteButton onDelete={() => deleteBuilding(b.id)} label="Delete building" />
-                  </div>
                 </div>
               )
             })}
