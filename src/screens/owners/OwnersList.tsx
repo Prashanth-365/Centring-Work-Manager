@@ -71,10 +71,10 @@ export function OwnersList() {
                 0,
               )
               return (
-                <div key={o.id} className="relative">
+                <div key={o.id} className="rounded-xl border border-border bg-card shadow-card">
                   <Link
                     to={`/owners/${o.id}`}
-                    className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                    className="flex items-center gap-3 p-3 transition active:scale-[0.99]"
                   >
                     <Thumb blob={o.photoThumb} name={o.name} />
                     <div className="min-w-0 flex-1">
@@ -91,7 +91,7 @@ export function OwnersList() {
                       </div>
                     )}
                   </Link>
-                  <div className="absolute right-2 top-2">
+                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
                     <DeleteButton onDelete={() => deleteOwner(o.id)} label="Delete owner" />
                   </div>
                 </div>

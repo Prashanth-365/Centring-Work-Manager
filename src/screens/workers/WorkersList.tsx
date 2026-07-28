@@ -200,10 +200,10 @@ export function WorkersList() {
           <div className="space-y-2">
             {filtered.map(({ w, bal }) => {
               return (
-                <div key={w.id} className="relative">
+                <div key={w.id} className="rounded-xl border border-border bg-card shadow-card">
                   <Link
                     to={`/workers/${w.id}`}
-                    className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                    className="flex items-center gap-3 p-3 transition active:scale-[0.99]"
                   >
                     <Thumb blob={w.photoThumb} name={w.name} />
                     <div className="min-w-0 flex-1">
@@ -221,7 +221,7 @@ export function WorkersList() {
                       </p>
                     </div>
                   </Link>
-                  <div className="absolute right-2 top-2">
+                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
                     <DeleteButton onDelete={() => deleteWorker(w.id)} label="Delete worker" />
                   </div>
                 </div>

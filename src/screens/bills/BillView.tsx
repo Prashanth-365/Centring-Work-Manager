@@ -31,25 +31,28 @@ import type { BillSection, Building, Mold, MoldBill, Owner } from '@/lib/types'
 /* ------------------------------------------------------------------ */
 /* Layout designer types                                               */
 /* ------------------------------------------------------------------ */
+/* Layout state — N-column array of section-id arrays                  */
+/* ------------------------------------------------------------------ */
 
-/** Maps sectionId → 'left' | 'right'. Sections not in the map fall back to
- * the auto-split rule (roof slab / roof → right, everything else → left). */
-export type LayoutMap = Record<string, 'left' | 'right'>
+/** cols[colIndex] = ordered array of sectionIds in that column.
+ *  Sections not in any col appear in the unplaced pool. */
+export type LayoutState = { cols: string[][] }
 
-function defaultLayoutMap(sections: BillSection[]): LayoutMap {
-  const map: LayoutMap = {}
+function defaultLayout(sections: BillSection[]): LayoutState {
   const isSlab = (s: BillSection) => /roof\s*slab/i.test(s.name)
   const isRoof = (s: BillSection) => !isSlab(s) && /roof/i.test(s.name)
-  for (const s of sections) {
-    map[s.id] = isSlab(s) || isRoof(s) ? 'right' : 'left'
-  }
-  return map
+  const left = sections.filter((s) => !isSlab(s) && !isRoof(s)).map((s) => s.id)
+  const right = [...sections.filter(isSlab), ...sections.filter(isRoof)].map((s) => s.id)
+  return { cols: [left, right] }
 }
 
-/** On-screen controls panel; hidden during print. */
+/* ------------------------------------------------------------------ */
+/* Full layout designer component                                       */
+/* ------------------------------------------------------------------ */
+
 function PrintControls({
   sections,
-  layoutMap,
+  layout,
   onLayout,
   fontSize,
   onFontSize,
@@ -57,81 +60,207 @@ function PrintControls({
   onRowPad,
 }: {
   sections: BillSection[]
-  layoutMap: LayoutMap
-  onLayout: (m: LayoutMap) => void
+  layout: LayoutState
+  onLayout: (l: LayoutState) => void
   fontSize: number
   onFontSize: (v: number) => void
   rowPad: number
   onRowPad: (v: number) => void
 }) {
-  function toggle(id: string) {
-    onLayout({ ...layoutMap, [id]: layoutMap[id] === 'left' ? 'right' : 'left' })
+  const placed = new Set(layout.cols.flat())
+  const unplaced = sections.filter((s) => !placed.has(s.id))
+
+  // Drag state stored in a ref so we don't re-render during drag
+  const dragRef = React.useRef<{ sid: string; col: number } | null>(null)
+
+  function patchCols(fn: (cols: string[][]) => string[][]): void {
+    onLayout({ cols: fn(layout.cols.map((c) => [...c])) })
   }
+
+  function removeFromCols(sid: string, cols: string[][]): void {
+    cols.forEach((c) => { const i = c.indexOf(sid); if (i !== -1) c.splice(i, 1) })
+  }
+
+  function moveUp(sid: string, ci: number) {
+    patchCols((cols) => {
+      const arr = cols[ci]; const i = arr.indexOf(sid)
+      if (i > 0) { [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]] }
+      return cols
+    })
+  }
+
+  function moveDown(sid: string, ci: number) {
+    patchCols((cols) => {
+      const arr = cols[ci]; const i = arr.indexOf(sid)
+      if (i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]] }
+      return cols
+    })
+  }
+
+  function removeFromCol(sid: string) {
+    patchCols((cols) => { removeFromCols(sid, cols); return cols })
+  }
+
+  function addCol() {
+    patchCols((cols) => { cols.push([]); return cols })
+  }
+
+  function removeCol(ci: number) {
+    patchCols((cols) => {
+      const orphans = cols.splice(ci, 1)[0]
+      if (!cols.length) cols.push([])
+      cols[cols.length - 1].push(...orphans)
+      return cols
+    })
+  }
+
+  function resetLayout() {
+    onLayout(defaultLayout(sections))
+  }
+
+  function handleDragStart(sid: string, col: number) {
+    dragRef.current = { sid, col }
+  }
+
+  function handleDrop(targetCol: number) {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (!drag) return
+    patchCols((cols) => {
+      removeFromCols(drag.sid, cols)
+      if (targetCol === -1) return cols          // drop on pool = unplace
+      while (cols.length <= targetCol) cols.push([])
+      cols[targetCol].push(drag.sid)
+      return cols
+    })
+  }
+
   return (
     <div className="print-hide mb-4 space-y-3 rounded-xl border border-border bg-card p-4 shadow-card">
       <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Print layout designer</p>
 
-      {/* Section column chips */}
+      {/* Unplaced pool */}
+      {unplaced.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Unplaced sections</p>
+          <div
+            className="flex min-h-[36px] flex-wrap gap-1.5 rounded-lg border border-dashed border-border p-2"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => handleDrop(-1)}
+          >
+            {unplaced.map((s) => (
+              <div
+                key={s.id}
+                draggable
+                onDragStart={() => handleDragStart(s.id, -1)}
+                className="flex cursor-grab items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-semibold text-foreground active:cursor-grabbing"
+              >
+                ☰ {s.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Column grid */}
+      <div className="overflow-x-auto">
+        <div className="flex min-w-0 gap-2" style={{ minWidth: `${layout.cols.length * 160}px` }}>
+          {layout.cols.map((col, ci) => (
+            <div key={ci} className="flex min-w-[140px] flex-1 flex-col rounded-lg border border-border bg-muted/30">
+              {/* Column header */}
+              <div className="flex items-center justify-between border-b border-border px-2 py-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Col {ci + 1}</span>
+                {layout.cols.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeCol(ci)}
+                    className="rounded px-1 text-[10px] font-semibold text-destructive hover:bg-destructive/10"
+                    title="Remove column (sections go to last col)"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Drop zone */}
+              <div
+                className="flex flex-1 flex-col gap-1 p-1.5"
+                style={{ minHeight: 60 }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => handleDrop(ci)}
+              >
+                {col.length === 0 && (
+                  <p className="py-2 text-center text-[11px] text-muted-foreground">Drop here</p>
+                )}
+                {col.map((sid) => {
+                  const s = sections.find((x) => x.id === sid)
+                  if (!s) return null
+                  return (
+                    <div
+                      key={sid}
+                      draggable
+                      onDragStart={() => handleDragStart(sid, ci)}
+                      className="flex items-center gap-1 rounded-md border border-border bg-primary px-2 py-1 text-xs font-semibold text-primary-foreground"
+                    >
+                      <span className="cursor-grab text-primary-foreground/70">☰</span>
+                      <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => moveUp(sid, ci)}
+                        className="shrink-0 text-primary-foreground/80 hover:text-primary-foreground"
+                        title="Move up"
+                      >▲</button>
+                      <button
+                        type="button"
+                        onClick={() => moveDown(sid, ci)}
+                        className="shrink-0 text-primary-foreground/80 hover:text-primary-foreground"
+                        title="Move down"
+                      >▼</button>
+                      <button
+                        type="button"
+                        onClick={() => removeFromCol(sid)}
+                        className="shrink-0 text-primary-foreground/60 hover:text-primary-foreground"
+                        title="Remove from column"
+                      >✕</button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions row */}
       <div className="flex flex-wrap gap-2">
-        {sections.map((s) => {
-          const side = layoutMap[s.id] ?? 'left'
-          return (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => toggle(s.id)}
-              className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                side === 'right'
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-muted text-foreground'
-              }`}
-            >
-              {s.name} → {side === 'left' ? '← L' : 'R →'}
-            </button>
-          )
-        })}
+        <button
+          type="button"
+          onClick={addCol}
+          className="rounded-lg border border-border bg-muted px-3 py-1.5 text-xs font-semibold hover:bg-accent"
+        >
+          + Column
+        </button>
+        <button
+          type="button"
+          onClick={resetLayout}
+          className="rounded-lg border border-border bg-muted px-3 py-1.5 text-xs font-semibold hover:bg-accent"
+        >
+          ↺ Reset to default
+        </button>
       </div>
 
       {/* Font size */}
       <div className="flex items-center gap-3">
-        <span className="w-24 text-xs text-muted-foreground">Font size: {fontSize}px</span>
-        <input
-          type="range"
-          min={9}
-          max={16}
-          step={0.5}
-          value={fontSize}
-          onChange={(e) => onFontSize(Number(e.target.value))}
-          className="flex-1"
-        />
-        <button
-          type="button"
-          className="text-xs text-muted-foreground underline"
-          onClick={() => onFontSize(13)}
-        >
-          reset
-        </button>
+        <span className="w-28 text-xs text-muted-foreground">Font size: {fontSize}px</span>
+        <input type="range" min={9} max={16} step={0.5} value={fontSize} onChange={(e) => onFontSize(Number(e.target.value))} className="flex-1" />
+        <button type="button" className="text-xs text-muted-foreground underline" onClick={() => onFontSize(13)}>reset</button>
       </div>
 
-      {/* Row padding */}
+      {/* Row spacing */}
       <div className="flex items-center gap-3">
-        <span className="w-24 text-xs text-muted-foreground">Row spacing: {rowPad}px</span>
-        <input
-          type="range"
-          min={1}
-          max={8}
-          step={0.5}
-          value={rowPad}
-          onChange={(e) => onRowPad(Number(e.target.value))}
-          className="flex-1"
-        />
-        <button
-          type="button"
-          className="text-xs text-muted-foreground underline"
-          onClick={() => onRowPad(4)}
-        >
-          reset
-        </button>
+        <span className="w-28 text-xs text-muted-foreground">Row spacing: {rowPad}px</span>
+        <input type="range" min={1} max={8} step={0.5} value={rowPad} onChange={(e) => onRowPad(Number(e.target.value))} className="flex-1" />
+        <button type="button" className="text-xs text-muted-foreground underline" onClick={() => onRowPad(4)}>reset</button>
       </div>
     </div>
   )
@@ -214,19 +343,18 @@ function SectionTable({ s, u, rowPad = 4 }: { s: BillSection; u: MoldBill['unit'
   )
 }
 
-/** Column rule: uses layoutMap when provided; falls back to the roof-slab heuristic. */
-function splitSections(sections: BillSection[], layoutMap?: LayoutMap): { left: BillSection[]; right: BillSection[] } {
-  if (layoutMap) {
-    return {
-      left: sections.filter((s) => (layoutMap[s.id] ?? 'left') === 'left'),
-      right: sections.filter((s) => (layoutMap[s.id] ?? 'left') === 'right'),
-    }
+/** Splits sections into N columns based on LayoutState; falls back to default 2-col heuristic. */
+function applySplit(sections: BillSection[], layout?: LayoutState): BillSection[][] {
+  if (layout) {
+    return layout.cols.map((col) =>
+      col.map((id) => sections.find((s) => s.id === id)).filter(Boolean) as BillSection[]
+    )
   }
   const isSlab = (s: BillSection) => /roof\s*slab/i.test(s.name)
   const isRoof = (s: BillSection) => !isSlab(s) && /roof/i.test(s.name)
   const right = [...sections.filter(isSlab), ...sections.filter(isRoof)]
   const left = sections.filter((s) => !isSlab(s) && !isRoof(s))
-  return { left, right }
+  return [left, right]
 }
 
 /** One floor's measurement sheet (used standalone and inside the consolidated view). */
@@ -234,14 +362,14 @@ function FloorSheet({
   building,
   owner,
   mold,
-  layoutMap,
+  layout,
   fontSize = 13,
   rowPad = 4,
 }: {
   building: Building
   owner?: Owner
   mold: Mold
-  layoutMap?: LayoutMap
+  layout?: LayoutState
   fontSize?: number
   rowPad?: number
 }) {
@@ -249,16 +377,18 @@ function FloorSheet({
   if (!bill) return null
   const t = billTotals(bill)
   const u = bill.unit
-  const { left, right } = splitSections(bill.sections, layoutMap)
+  const cols = applySplit(bill.sections, layout)
+  const colFr = cols.map(() => '1fr').join(' ')
   return (
     <section className="bill-sheet space-y-3" style={{ fontSize }}>
       <h2 className="bill-title text-center text-sm font-bold uppercase tracking-[0.2em]">
         Centering Work Bill — {mold.floorName}
       </h2>
       <SheetInfo building={building} owner={owner} mold={mold} />
-      <div className="bill-meas-cols grid grid-cols-2 items-start gap-x-4">
-        <div>{left.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
-        <div>{right.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
+      <div className="bill-meas-cols items-start gap-x-4" style={{ display: 'grid', gridTemplateColumns: colFr }}>
+        {cols.map((colSecs, ci) => (
+          <div key={ci}>{colSecs.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
+        ))}
       </div>
 
       <div className="border-t-2 border-foreground" />
@@ -389,7 +519,7 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   const bill = mold.bill!
   const t = billTotals(bill)
   const u = bill.unit
-  const { left, right } = splitSections(bill.sections)
+  const [left, right] = applySplit(bill.sections)
   const toPdfSection = (s: BillSection) => ({
     name: s.name,
     rows: s.rows
@@ -477,16 +607,16 @@ export function MoldBillView() {
   const building = useBuilding(mold?.buildingId)
   const owner = useOwner(building?.ownerId)
 
-  const [layoutMap, setLayoutMap] = React.useState<LayoutMap | null>(null)
+  const [layout, setLayout] = React.useState<LayoutState | null>(null)
   const [fontSize, setFontSize] = React.useState(13)
   const [rowPad, setRowPad] = React.useState(4)
 
-  // Init layoutMap once bill sections are available
+  // Init layout once bill sections are available
   React.useEffect(() => {
-    if (mold?.bill && layoutMap === null) {
-      setLayoutMap(defaultLayoutMap(mold.bill.sections))
+    if (mold?.bill && layout === null) {
+      setLayout(defaultLayout(mold.bill.sections))
     }
-  }, [mold?.bill, layoutMap])
+  }, [mold?.bill, layout])
 
   if (!mold || !building) return <PageHeader title="Bill" back />
 
@@ -547,8 +677,8 @@ export function MoldBillView() {
           <>
             <PrintControls
               sections={activeSections}
-              layoutMap={layoutMap ?? defaultLayoutMap(activeSections)}
-              onLayout={setLayoutMap}
+              layout={layout ?? defaultLayout(activeSections)}
+              onLayout={setLayout}
               fontSize={fontSize}
               onFontSize={setFontSize}
               rowPad={rowPad}
@@ -560,7 +690,7 @@ export function MoldBillView() {
                   building={building}
                   owner={owner}
                   mold={mold}
-                  layoutMap={layoutMap ?? undefined}
+                  layout={layout ?? undefined}
                   fontSize={fontSize}
                   rowPad={rowPad}
                 />
@@ -587,20 +717,20 @@ export function BuildingBillView() {
   void txns
 
   // Layout state — per-floor maps keyed by mold id
-  const [layoutMaps, setLayoutMaps] = React.useState<Record<string, LayoutMap>>({})
+  const [layouts, setLayouts] = React.useState<Record<string, LayoutState>>({})
   const [fontSize, setFontSize] = React.useState(13)
   const [rowPad, setRowPad] = React.useState(4)
 
   const billed = molds.filter((m) => m.bill)
 
-  // Init each floor's layout map once
+  // Init each floor's layout once
   React.useEffect(() => {
-    setLayoutMaps((prev) => {
+    setLayouts((prev) => {
       const next = { ...prev }
       let changed = false
       for (const m of billed) {
         if (!next[m.id] && m.bill) {
-          next[m.id] = defaultLayoutMap(m.bill.sections)
+          next[m.id] = defaultLayout(m.bill.sections)
           changed = true
         }
       }
@@ -618,18 +748,25 @@ export function BuildingBillView() {
 
   // Flat list of all sections across all floors for the layout designer
   const allSections = billed.flatMap((m) => m.bill!.sections)
-  const combinedLayoutMap: LayoutMap = Object.assign({}, ...Object.values(layoutMaps))
+  // For the consolidated view, show a single combined layout designer using the first floor's layout
+  // but apply per-floor when rendering each floor sheet
+  const sharedLayout: LayoutState = layouts[billed[0]?.id] ?? defaultLayout(allSections)
 
-  function handleLayout(map: LayoutMap) {
-    // Distribute updates back to per-floor maps
-    setLayoutMaps((prev) => {
+  function handleLayout(newLayout: LayoutState) {
+    // Apply the same column structure to all floors, matching by section name
+    setLayouts((prev) => {
       const next = { ...prev }
       for (const m of billed) {
-        const floorMap = { ...prev[m.id] }
-        for (const s of m.bill!.sections) {
-          if (map[s.id] !== undefined) floorMap[s.id] = map[s.id]
-        }
-        next[m.id] = floorMap
+        const secs = m.bill!.sections
+        // Map column structure: match section ids by position in each column using name lookup
+        const floorCols = newLayout.cols.map((col) =>
+          col.map((sid) => {
+            // Find this section in this floor by same id (if cross-floor designer, fallback to name match)
+            const direct = secs.find((s) => s.id === sid)
+            return direct?.id
+          }).filter(Boolean) as string[]
+        )
+        next[m.id] = { cols: floorCols }
       }
       return next
     })
@@ -670,7 +807,7 @@ export function BuildingBillView() {
           <>
             <PrintControls
               sections={allSections}
-              layoutMap={combinedLayoutMap}
+              layout={sharedLayout}
               onLayout={handleLayout}
               fontSize={fontSize}
               onFontSize={setFontSize}
@@ -732,7 +869,7 @@ export function BuildingBillView() {
                         building={building}
                         owner={owner}
                         mold={m}
-                        layoutMap={layoutMaps[m.id]}
+                        layout={layouts[m.id]}
                         fontSize={fontSize}
                         rowPad={rowPad}
                       />

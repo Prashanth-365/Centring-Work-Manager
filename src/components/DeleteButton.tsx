@@ -1,74 +1,107 @@
-import * as React from 'react'
-import { Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import * as React from "react"
+import { Trash2, Undo2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 interface DeleteButtonProps {
   onDelete: () => void | Promise<void>
   label?: string
-  /** Render as a small icon-only button (default) or a full-width danger button */
-  variant?: 'icon' | 'full'
+  variant?: "icon" | "full"
   className?: string
 }
 
-/**
- * Two-tap confirmation pattern:
- *  1st tap → turns red, shows "Tap again to confirm"
- *  2nd tap (within 3 s) → calls onDelete
- *  If not tapped again within 3 s → resets
- */
-export function DeleteButton({ onDelete, label = 'Delete', variant = 'icon', className }: DeleteButtonProps) {
-  const [confirming, setConfirming] = React.useState(false)
+function ConfirmDialog({ label, onConfirm, onCancel }: { label: string; onConfirm: () => void; onCancel: () => void }) {
+  function handleBackdrop(e: React.MouseEvent<HTMLDivElement>) { if (e.target === e.currentTarget) onCancel() }
+  React.useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onCancel() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onCancel])
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={handleBackdrop}>
+      <div className="w-full max-w-xs rounded-2xl border border-border bg-card p-5 shadow-xl">
+        <div className="mb-1 flex items-center gap-2">
+          <Trash2 className="size-5 shrink-0 text-destructive" />
+          <p className="font-semibold">Delete {label}?</p>
+        </div>
+        <p className="mb-4 text-sm text-muted-foreground">You will have 5 seconds to undo after confirming.</p>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
+          <Button variant="destructive" className="flex-1" onClick={onConfirm}>Delete</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const UNDO_MS = 5000
+
+function UndoToast({ label, onUndo, onExpire }: { label: string; onUndo: () => void; onExpire: () => void }) {
+  const [pct, setPct] = React.useState(100)
+  const startRef = React.useRef(Date.now())
+  const rafRef = React.useRef<number | null>(null)
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function reset() {
-    setConfirming(false)
-    if (timerRef.current) clearTimeout(timerRef.current)
-  }
-
-  function handleClick(e: React.MouseEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!confirming) {
-      setConfirming(true)
-      timerRef.current = setTimeout(reset, 3000)
-    } else {
-      reset()
-      void onDelete()
+  React.useEffect(() => {
+    timerRef.current = setTimeout(onExpire, UNDO_MS)
+    function tick() {
+      const elapsed = Date.now() - startRef.current
+      setPct(Math.max(0, 100 - (elapsed / UNDO_MS) * 100))
+      if (elapsed < UNDO_MS) rafRef.current = requestAnimationFrame(tick)
     }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  function handleUndo() {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    onUndo()
   }
+  return (
+    <div className="fixed bottom-20 left-1/2 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <Trash2 className="size-4 shrink-0 text-destructive" />
+        <span className="min-w-0 flex-1 text-sm font-medium">{label} deleted</span>
+        <button type="button" onClick={handleUndo} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">
+          <Undo2 className="size-3.5" />Undo
+        </button>
+      </div>
+      <div className="h-1 bg-primary" style={{ width: pct + "%", transition: "none" }} />
+    </div>
+  )
+}
 
-  React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+type Phase = "idle" | "confirming" | "undoing"
 
-  if (variant === 'full') {
+export function DeleteButton({ onDelete, label = "Delete", variant = "icon", className }: DeleteButtonProps) {
+  const [phase, setPhase] = React.useState<Phase>("idle")
+  const undidRef = React.useRef(false)
+  function handleClick(e: React.MouseEvent) { e.preventDefault(); e.stopPropagation(); setPhase("confirming") }
+  function handleConfirm() { undidRef.current = false; setPhase("undoing") }
+  function handleUndo() { undidRef.current = true; setPhase("idle") }
+  async function handleExpire() { setPhase("idle"); if (!undidRef.current) await onDelete() }
+  const overlays = (
+    <>
+      {phase === "confirming" && <ConfirmDialog label={label} onConfirm={handleConfirm} onCancel={() => setPhase("idle")} />}
+      {phase === "undoing" && <UndoToast label={label} onUndo={handleUndo} onExpire={handleExpire} />}
+    </>
+  )
+  if (variant === "full") {
     return (
-      <Button
-        type="button"
-        variant={confirming ? 'destructive' : 'outline'}
-        className={cn('w-full border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground', confirming && 'animate-pulse', className)}
-        onClick={handleClick}
-      >
-        <Trash2 className="size-4" />
-        {confirming ? 'Tap again to confirm delete' : label}
-      </Button>
+      <>
+        {overlays}
+        <Button type="button" variant="outline" className={cn("w-full border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground", className)} onClick={handleClick}>
+          <Trash2 className="size-4" />{label}
+        </Button>
+      </>
     )
   }
-
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      aria-label={confirming ? 'Tap again to confirm delete' : label}
-      title={confirming ? 'Tap again to confirm delete' : label}
-      className={cn(
-        'transition-colors',
-        confirming ? 'animate-pulse text-destructive' : 'text-muted-foreground hover:text-destructive',
-        className,
-      )}
-      onClick={handleClick}
-    >
-      <Trash2 className="size-5" />
-    </Button>
+    <>
+      {overlays}
+      <Button type="button" variant="ghost" size="icon" aria-label={label} title={label} className={cn("size-8 text-muted-foreground hover:text-destructive", className)} onClick={handleClick}>
+        <Trash2 className="size-4" />
+      </Button>
+    </>
   )
 }

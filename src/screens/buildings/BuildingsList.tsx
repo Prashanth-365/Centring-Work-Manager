@@ -231,10 +231,10 @@ export function BuildingsList() {
           <div className="space-y-2.5">
             {filtered.map(({ b, c, name }) => {
               return (
-                <div key={b.id} className="relative">
+                <div key={b.id} className="rounded-xl border border-border bg-card shadow-card">
                   <Link
                     to={`/buildings/${b.id}`}
-                    className="block rounded-xl border border-border bg-card p-3.5 shadow-card transition active:scale-[0.99]"
+                    className="block p-3.5 transition active:scale-[0.99]"
                   >
                     <div className="flex items-start gap-3">
                       <Thumb blob={b.photoThumb} name={name} square />
@@ -263,7 +263,7 @@ export function BuildingsList() {
                       </div>
                     </div>
                   </Link>
-                  <div className="absolute right-2 top-2">
+                  <div className="flex justify-end border-t border-border/50 px-2 py-1">
                     <DeleteButton onDelete={() => deleteBuilding(b.id)} label="Delete building" />
                   </div>
                 </div>

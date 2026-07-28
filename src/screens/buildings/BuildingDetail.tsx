@@ -173,10 +173,10 @@ export function BuildingDetail() {
                 const received = receiptsForMold(m.id, txns)
                 const outstanding = moldOutstanding(m, txns)
                 return (
-                  <div key={m.id} className="relative">
+                  <div key={m.id} className="rounded-xl border border-border bg-card shadow-card">
                     <Link
                       to={`/molds/${m.id}`}
-                      className="block rounded-xl border border-border bg-card p-3 shadow-card transition active:scale-[0.99]"
+                      className="block p-3 transition active:scale-[0.99]"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate font-medium">{m.floorName}</p>
@@ -198,7 +198,7 @@ export function BuildingDetail() {
                         </div>
                       )}
                     </Link>
-                    <div className="absolute right-2 top-2">
+                    <div className="flex justify-end border-t border-border/50 px-2 py-1">
                       <DeleteButton onDelete={() => deleteMold(m.id)} label="Delete floor" />
                     </div>
                   </div>
