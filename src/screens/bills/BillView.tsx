@@ -555,11 +555,11 @@ function sheetInfoPairs(building: Building, owner: Owner | undefined, name: stri
   return info
 }
 
-function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold): BillPdfSheet {
+function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold, layout?: LayoutState): BillPdfSheet {
   const bill = mold.bill!
   const t = billTotals(bill)
   const u = bill.unit
-  const [left, right] = applySplit(bill.sections)
+  const cols = applySplit(bill.sections, layout)
   const toPdfSection = (s: BillSection) => ({
     name: s.name,
     rows: s.rows
@@ -581,7 +581,7 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
   return {
     title: `Centering Work Bill — ${mold.floorName}`,
     info: sheetInfoPairs(building, owner, name, mold),
-    measureCols: { left: left.map(toPdfSection), right: right.map(toPdfSection) },
+    measureCols: { cols: cols.map((colSecs) => colSecs.map(toPdfSection)) },
     recap: {
       lines: bill.sections.map((s) => [s.name, areaDisplay(sectionTotal(s), u)] as [string, string]),
       total: ['Total area', `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`],
@@ -673,7 +673,7 @@ export function MoldBillView() {
                 onClick={() =>
                   void printBill(
                     `${name} · ${mold.floorName} · Centering Work Bill · ${formatDate(todayISO())}`,
-                    [floorPdfSheet(building, owner, name, mold)],
+                    [floorPdfSheet(building, owner, name, mold, layout)],
                   )
                 }
                 aria-label="Print"
@@ -811,7 +811,7 @@ export function BuildingBillView() {
               onClick={() =>
                 void printBill(`${name} · Consolidated Bill · ${formatDate(todayISO())}`, [
                   consolidatedPdfSheet(building, owner, name, billed),
-                  ...billed.map((m) => floorPdfSheet(building, owner, name, m)),
+                  ...billed.map((m) => floorPdfSheet(building, owner, name, m, floorLayouts[m.id])),
                 ])
               }
               aria-label="Print"
@@ -833,7 +833,8 @@ export function BuildingBillView() {
             <PrintControls
               sections={allSections}
               layout={sharedLayout}
-              onLayout={handleLayout}              fontSize={fontSize}
+              onLayout={handleLayout}
+              fontSize={fontSize}
               onFontSize={setFontSize}
               rowPad={rowPad}
               onRowPad={setRowPad}

@@ -17,11 +17,10 @@ export interface BillPdfSheet {
   info: [string, string][]
   /** Consolidated view: one flat table. */
   table?: { head: string[]; rows: string[][] }
-  /** Floor bills: per-section `L X H X n no total` tables in two columns
-   * (Roof Slab/Roof always top-right, like the old paper bills). */
+  /** Floor bills: per-section `L X H X n no total` tables in N columns
+   * matching the layout designer arrangement. */
   measureCols?: {
-    left: { name: string; rows: string[][]; total: string }[]
-    right: { name: string; rows: string[][]; total: string }[]
+    cols: { name: string; rows: string[][]; total: string }[][]
   }
   /** Boxed section-totals recap (section name / area), matching the web layout. */
   recap?: { lines: [string, string][]; total: [string, string] }
@@ -104,8 +103,8 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
 
     // Measurements
     if (sheet.measureCols) {
-      // Two independent autoTable columns, like the paper bills.
-      const colW = (pageW - margin * 2 - 14) / 2
+      const numCols = sheet.measureCols.cols.length
+      const colW = (pageW - margin * 2 - (numCols - 1) * 14) / numCols
       const startY = y
       const colStyles = {
         1: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
@@ -113,7 +112,7 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
         5: { cellWidth: 18, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
         6: { fontStyle: 'bold' as const },
       }
-      const drawCol = (secs: NonNullable<BillPdfSheet['measureCols']>['left'], x: number) => {
+      const drawCol = (secs: NonNullable<BillPdfSheet['measureCols']>['cols'][number], x: number) => {
         let cy = startY
         for (const s of secs) {
           const body = [
@@ -140,15 +139,15 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
         return cy
       }
       const pageBefore = doc.getNumberOfPages()
-      const endL = drawCol(sheet.measureCols.left, margin)
-      const pageAfterL = doc.getNumberOfPages()
-      // autoTable draws on the CURRENT page — jump back so the right column
-      // starts beside the left one, not on the overflow page.
-      doc.setPage(pageBefore)
-      const endR = drawCol(sheet.measureCols.right, margin + colW + 14)
-      const pageAfterR = doc.getNumberOfPages()
-      doc.setPage(Math.max(pageAfterL, pageAfterR))
-      y = Math.max(endL, endR) + 8
+      const endYs: number[] = []
+      sheet.measureCols.cols.forEach((colSecs, ci) => {
+        if (ci > 0) doc.setPage(pageBefore)
+        const x = margin + ci * (colW + 14)
+        endYs.push(drawCol(colSecs, x))
+      })
+      const pageAfter = doc.getNumberOfPages()
+      doc.setPage(pageAfter)
+      y = Math.max(...endYs) + 8
     } else if (sheet.table) {
       autoTable(doc, {
         head: [sheet.table.head.map(safe)],
