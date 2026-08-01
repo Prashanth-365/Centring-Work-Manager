@@ -92,6 +92,9 @@ export interface MoldBill {
   /** Advance deducted on the printed bill. Defaults from the assigned
    * OwnerReceipt txns for the mold but is user-editable. */
   advance: number
+  /** ISO date shown as the bill date (top-left of the printed header).
+   * Defaults to today if absent. User-editable in BillEditor. */
+  billDate?: string
   updatedAt: number
 }
 
@@ -127,6 +130,13 @@ export interface WageEntry {
   dailyWage: number
 }
 
+/** A food amount effective from a date (mirrors WageEntry for wages). */
+export interface FoodEntry {
+  effectiveFrom: string // 'yyyy-MM-dd'
+  /** Base amount (breakfast, lunch, perDay, or perWeek depending on foodMode). */
+  amount: number
+}
+
 export interface Worker {
   id: string
   name: string
@@ -145,6 +155,10 @@ export interface Worker {
   foodPerDay?: number // for fixedPerDay
   foodPerWeek?: number // for fixedPerWeek
   maxDaysPerWeek: number // default 10
+  /** Optional effective-dated food-amount overrides (per-worker). When present,
+   * `foodAmountOnDate()` returns the entry effective on that date; otherwise
+   * the flat foodBreakfast/foodLunch/foodPerDay/foodPerWeek fields apply. */
+  foodHistory?: FoodEntry[]
   createdAt: number
   updatedAt: number
 }
@@ -188,6 +202,9 @@ export interface SyncedTransaction {
   typeName?: string // the raw source sub-category name (pre-mapping)
   importFingerprint?: string // secondary identity signal for dedupe / assignment carry-over
   description?: string
+  /** Tags from the finance app export (array of strings, any order).
+   * Used for auto-matching entities (worker/owner/building) in the review popup. */
+  tags?: string[]
   lastSeenAmount: number
   assignmentStatus: AssignmentStatus
   // assignment fields (depend on subCategory)

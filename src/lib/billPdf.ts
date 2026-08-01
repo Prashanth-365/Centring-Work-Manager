@@ -9,23 +9,27 @@
 // This module is only imported on native, and jspdf is lazy-loaded so it never
 // enters the web bundle.
 import { downloadStamp } from './files'
+import type { jsPDF as JsPDF } from 'jspdf'
 
 export interface BillPdfSheet {
-  /** e.g. "Centering Work Bill — Ground Floor" */
+  /** e.g. "Subba Reddy - Thoguru — Ground Floor" */
   title: string
-  /** label/value pairs shown under the title (Owner, Location, …). */
-  info: [string, string][]
+  /** ISO bill date shown top-left (defaults to today). */
+  billDate?: string
   /** Consolidated view: one flat table. */
   table?: { head: string[]; rows: string[][] }
-  /** Floor bills: per-section `L X H X n no total` tables in N columns
-   * matching the layout designer arrangement. */
+  /** Floor bills: per-section `L X H X n no total` tables in N columns. */
   measureCols?: {
     cols: { name: string; rows: string[][]; total: string }[][]
   }
-  /** Boxed section-totals recap (section name / area), matching the web layout. */
+  /** Boxed section-totals recap (section name / area). */
   recap?: { lines: [string, string][]; total: [string, string] }
-  /** Bottom money lines; `strong` renders bold + slightly larger. */
+  /** Bottom money lines. */
   summary: { label: string; value: string; strong?: boolean; tone?: 'primary' | 'danger' | 'success' }[]
+  /** Font size in pt (mirrors the web preview slider). */
+  fontSize?: number
+  /** Cell padding in pt (mirrors the row-pad slider). */
+  rowPad?: number
 }
 
 const COMPANY = 'Sri Siddeshwara Swami Prasanna (SSP)'
@@ -47,6 +51,68 @@ const safe = (s: string) =>
     .replace(/\u2212/g, '-')
     .replace(/[^\x20-\x7E]/g, '')
 
+// downloadStamp already imported above
+
+/** Draw company head + bill header on a given page. Returns the y after the header. */
+function drawPageHead(
+  doc: JsPDF,
+  pageW: number,
+  margin: number,
+  sheet: BillPdfSheet,
+): number {
+  let y = 32
+  // Company name
+  doc.setFont('times', 'bold')
+  doc.setFontSize(16)
+  doc.text(COMPANY, pageW / 2, y, { align: 'center' })
+  y += 13
+  // Subtitle + contact
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.text(safe(COMPANY_SUB), pageW / 2, y, { align: 'center' })
+  doc.setFont('helvetica', 'bold')
+  doc.text(safe(CONTACT), pageW - margin, y, { align: 'right' })
+  y += 6
+  doc.setLineWidth(1.0)
+  doc.line(margin, y, pageW - margin, y)
+  y += 10
+  // Bill date left, contact already shown; title centred
+  const billDate = sheet.billDate ? new Date(sheet.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.text(billDate, margin, y)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(sheet.fontSize ?? 10)
+  doc.text(safe(sheet.title).toUpperCase(), pageW / 2, y + 2, { align: 'center' })
+  y += 12
+  doc.setLineWidth(1.2)
+  doc.line(margin, y, pageW - margin, y)
+  y += 8
+  return y
+}
+
+/** Draw signature footer on the current page. */
+function drawSignatureFoot(
+  doc: JsPDF,
+  pageW: number,
+  pageH: number,
+  margin: number,
+): void {
+  const sy = pageH - 52
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setLineWidth(0.5)
+  doc.line(margin, sy, margin + 120, sy)
+  doc.line(pageW - margin - 120, sy, pageW - margin, sy)
+  doc.text('Owner signature', margin + 60, sy + 11, { align: 'center' })
+  doc.text(`For ${safe(COMPANY)}`, pageW - margin - 60, sy + 11, { align: 'center' })
+  doc.setFont('helvetica', 'italic')
+  doc.setFontSize(7.5)
+  doc.setTextColor(120, 120, 120)
+  doc.text('Thank you for your business!', pageW / 2, sy + 24, { align: 'center' })
+  doc.setTextColor(0, 0, 0)
+}
+
 export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfSheet[] }): Promise<{ uri: string }> {
   const { jsPDF } = await import('jspdf')
   const autoTable = (await import('jspdf-autotable')).default
@@ -55,61 +121,32 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
   const margin = 40
+  const sigHeight = 60 // reserved at bottom for signature
 
   opts.sheets.forEach((sheet, si) => {
     if (si > 0) doc.addPage()
-    let y = 48
 
-    // Company head
-    doc.setFont('times', 'bold')
-    doc.setFontSize(18)
-    doc.text(COMPANY, pageW / 2, y, { align: 'center' })
-    y += 16
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.text(safe(COMPANY_SUB).toUpperCase().split('').join(' ').replace(/\s{3}/g, '  '), pageW / 2, y, { align: 'center' })
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(8.5)
-    doc.text(safe(CONTACT), pageW - margin, y, { align: 'right' })
-    y += 8
-    doc.setLineWidth(1.2)
-    doc.line(margin, y, pageW - margin, y)
-    y += 22
+    const fs = sheet.fontSize ?? 9
+    const rp = sheet.rowPad ?? 3
 
-    // Title
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
-    doc.text(safe(sheet.title).toUpperCase(), pageW / 2, y, { align: 'center' })
-    y += 18
+    let y = drawPageHead(doc, pageW, margin, sheet)
 
-    // Info grid — two columns
-    doc.setFontSize(9)
-    const colW = (pageW - margin * 2) / 2
-    sheet.info.forEach(([label, value], i) => {
-      const x = margin + (i % 2) * colW
-      doc.setFont('helvetica', 'bold')
-      doc.text(`${safe(label)}: `, x, y)
-      const lw = doc.getTextWidth(`${safe(label)}: `)
-      doc.setFont('helvetica', 'normal')
-      doc.text(safe(value), x + lw, y)
-      if (i % 2 === 1) y += 13
-    })
-    if (sheet.info.length % 2 === 1) y += 13
-    // Divider under the info grid (matches the web sheet)
-    doc.setDrawColor(51, 51, 51)
-    doc.setLineWidth(1.2)
-    doc.line(margin, y - 4, pageW - margin, y - 4)
-    y += 10
+    const ensureSpace = (needed: number) => {
+      if (y + needed > pageH - sigHeight - 20) {
+        doc.addPage()
+        y = drawPageHead(doc, pageW, margin, sheet)
+      }
+    }
 
     // Measurements
     if (sheet.measureCols) {
       const numCols = sheet.measureCols.cols.length
-      const colW = (pageW - margin * 2 - (numCols - 1) * 14) / numCols
+      const mColW = (pageW - margin * 2 - (numCols - 1) * 14) / numCols
       const startY = y
       const colStyles = {
-        1: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
-        3: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
-        5: { cellWidth: 18, textColor: [138, 151, 163] as [number, number, number], fontSize: 7 },
+        1: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: Math.max(6, fs - 2) },
+        3: { cellWidth: 14, textColor: [138, 151, 163] as [number, number, number], fontSize: Math.max(6, fs - 2) },
+        5: { cellWidth: 18, textColor: [138, 151, 163] as [number, number, number], fontSize: Math.max(6, fs - 2) },
         6: { fontStyle: 'bold' as const },
       }
       const drawCol = (secs: NonNullable<BillPdfSheet['measureCols']>['cols'][number], x: number) => {
@@ -127,10 +164,10 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
           autoTable(doc, {
             body: body as never,
             startY: cy,
-            margin: { left: x, top: margin, bottom: margin },
-            tableWidth: colW,
+            margin: { left: x, top: margin, bottom: sigHeight + 20 },
+            tableWidth: mColW,
             theme: 'grid',
-            styles: { fontSize: 8.5, cellPadding: 3, halign: 'center', lineColor: [184, 198, 210], lineWidth: 0.6, textColor: [0, 0, 0] },
+            styles: { fontSize: fs, cellPadding: rp, halign: 'center', lineColor: [184, 198, 210], lineWidth: 0.6, textColor: [0, 0, 0] },
             columnStyles: colStyles,
           })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -142,7 +179,7 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       const endYs: number[] = []
       sheet.measureCols.cols.forEach((colSecs, ci) => {
         if (ci > 0) doc.setPage(pageBefore)
-        const x = margin + ci * (colW + 14)
+        const x = margin + ci * (mColW + 14)
         endYs.push(drawCol(colSecs, x))
       })
       const pageAfter = doc.getNumberOfPages()
@@ -153,23 +190,14 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
         head: [sheet.table.head.map(safe)],
         body: sheet.table.rows.map((r) => r.map(safe)),
         startY: y,
-        margin: { left: margin, right: margin },
+        margin: { left: margin, right: margin, bottom: sigHeight + 20 },
         theme: 'grid',
-        styles: { fontSize: 8.5, cellPadding: 3, halign: 'center' },
+        styles: { fontSize: fs, cellPadding: rp, halign: 'center' },
         headStyles: { fillColor: [26, 82, 118], textColor: 255 },
         columnStyles: { 0: { halign: 'left' } },
       })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       y = (doc as any).lastAutoTable.finalY + 16
-    }
-
-    // Content past the table is drawn manually — break to a fresh page instead
-    // of letting it run off the bottom (long bills were getting cropped).
-    const ensureSpace = (need: number) => {
-      if (y + need > pageH - margin) {
-        doc.addPage()
-        y = margin + 8
-      }
     }
 
     // Boxed section-totals recap (mirrors the web layout)
@@ -241,32 +269,17 @@ export async function shareBillPdf(opts: { fileTitle: string; sheets: BillPdfShe
       y += line.strong ? 22 : 18
     })
     doc.setTextColor(0, 0, 0)
-
-    // Signature foot
-    ensureSpace(90)
-    y = Math.max(y + 40, pageH - 110)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    doc.setLineWidth(0.5)
-    doc.line(margin, y, margin + 140, y)
-    doc.line(pageW - margin - 140, y, pageW - margin, y)
-    doc.text('Owner signature', margin + 70, y + 12, { align: 'center' })
-    doc.text(`For ${safe(COMPANY)}`, pageW - margin - 70, y + 12, { align: 'center' })
-    doc.setFont('helvetica', 'italic')
-    doc.setFontSize(8.5)
-    doc.setTextColor(102, 102, 102)
-    doc.text('Thank you for your business!', pageW / 2, y + 30, { align: 'center' })
-    doc.setTextColor(0, 0, 0)
   })
 
-  // Centered page number on every page, below the thank-you line.
+  // Draw signature footer + page number on EVERY page (per-page repeating footer).
   const pageCount = doc.getNumberOfPages()
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p)
+    drawSignatureFoot(doc, pageW, pageH, margin)
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
+    doc.setFontSize(7.5)
     doc.setTextColor(120, 120, 120)
-    doc.text(`Page ${p} of ${pageCount}`, pageW / 2, pageH - 24, { align: 'center' })
+    doc.text(`Page ${p} of ${pageCount}`, pageW / 2, pageH - 10, { align: 'center' })
     doc.setTextColor(0, 0, 0)
   }
 

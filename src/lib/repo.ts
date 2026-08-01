@@ -209,6 +209,62 @@ export async function removeWorkerWage(id: string, effectiveFrom: string): Promi
   })
 }
 
+// ---- Effective-dated food history (mirrors wage helpers above) ----
+
+import type { FoodEntry as FoodHistEntry } from './types'
+
+function withFood(
+  worker: { foodHistory?: FoodHistEntry[] },
+  amount: number,
+  effectiveFrom: string,
+): FoodHistEntry[] {
+  const hist = [...(worker.foodHistory ?? [])]
+  const idx = hist.findIndex((e) => e.effectiveFrom === effectiveFrom)
+  if (idx >= 0) hist[idx] = { effectiveFrom, amount }
+  else hist.push({ effectiveFrom, amount })
+  return hist.sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : 1))
+}
+
+export async function setWorkerFoodAmount(
+  id: string,
+  amount: number,
+  effectiveFrom: string,
+): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  await db.workers.update(id, {
+    foodHistory: withFood(worker, amount, effectiveFrom),
+    updatedAt: now(),
+  })
+}
+
+export async function editWorkerFoodAmount(
+  id: string,
+  originalEffectiveFrom: string,
+  amount: number,
+  effectiveFrom: string,
+): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  const without = {
+    ...worker,
+    foodHistory: (worker.foodHistory ?? []).filter((e) => e.effectiveFrom !== originalEffectiveFrom),
+  }
+  await db.workers.update(id, {
+    foodHistory: withFood(without, amount, effectiveFrom),
+    updatedAt: now(),
+  })
+}
+
+export async function removeWorkerFoodAmount(id: string, effectiveFrom: string): Promise<void> {
+  const worker = await db.workers.get(id)
+  if (!worker) return
+  await db.workers.update(id, {
+    foodHistory: (worker.foodHistory ?? []).filter((e) => e.effectiveFrom !== effectiveFrom),
+    updatedAt: now(),
+  })
+}
+
 export async function deleteWorker(id: string): Promise<void> {
   await db.workers.delete(id)
 }

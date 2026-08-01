@@ -20,8 +20,11 @@ import { useSettings, useWorker } from '@/lib/hooks'
 import {
   createWorker,
   deleteWorker,
+  editWorkerFoodAmount,
   editWorkerWage,
+  removeWorkerFoodAmount,
   removeWorkerWage,
+  setWorkerFoodAmount,
   setWorkerWage,
   updateWorker,
 } from '@/lib/repo'
@@ -62,6 +65,13 @@ export function WorkerForm() {
   const [editWage, setEditWage] = React.useState('')
   const [editDate, setEditDate] = React.useState('')
   const [delEntry, setDelEntry] = React.useState<string | null>(null)
+  // Inline food-history editing
+  const [foodAmt, setFoodAmt] = React.useState('')
+  const [foodEffective, setFoodEffective] = React.useState(todayISO())
+  const [editFoodEntry, setEditFoodEntry] = React.useState<string | null>(null)
+  const [editFoodAmt, setEditFoodAmt] = React.useState('')
+  const [editFoodDate, setEditFoodDate] = React.useState('')
+  const [delFoodEntry, setDelFoodEntry] = React.useState<string | null>(null)
   const loaded = React.useRef(false)
   const seeded = React.useRef(false)
 
@@ -362,6 +372,90 @@ export function WorkerForm() {
         )}
       </div>
 
+      {/* Food amount history (optional — mirrors wage history) */}
+      {editing && existing && (
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3.5">
+          <p className="text-sm font-semibold">Food amount history</p>
+          <p className="text-xs text-muted-foreground">
+            Override the food amount for a specific date onwards. Leave empty to use the flat amounts above.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={`New amount (${foodMode === 'meal' ? '₹/day combined' : foodMode === 'fixedPerDay' ? '₹/day' : '₹/week'})`}>
+              {(fid) => (
+                <Input id={fid} type="number" inputMode="decimal" value={foodAmt}
+                  onChange={(e) => setFoodAmt(e.target.value)} className="w-28" />
+              )}
+            </Field>
+            <Field label="Effective from">
+              {(fid) => (
+                <input id={fid} type="date" value={foodEffective}
+                  onChange={(e) => setFoodEffective(e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
+              )}
+            </Field>
+            <Button type="button" variant="outline" size="sm"
+              disabled={!foodAmt.trim() || !foodEffective}
+              onClick={async () => {
+                await setWorkerFoodAmount(existing.id, Number(foodAmt), foodEffective)
+                setFoodAmt('')
+                setFoodEffective(todayISO())
+              }}
+            >Add</Button>
+          </div>
+          {(existing.foodHistory ?? []).length > 0 && (
+            <div className="mt-1 space-y-1.5">
+              {[...(existing.foodHistory ?? [])]
+                .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))
+                .map((e) =>
+                  editFoodEntry === e.effectiveFrom ? (
+                    <div key={e.effectiveFrom} className="flex flex-wrap items-end gap-2 rounded-lg bg-muted/50 px-2 py-2">
+                      <Field label="Amount">
+                        {(fid) => <Input id={fid} type="number" value={editFoodAmt} onChange={(ev) => setEditFoodAmt(ev.target.value)} className="w-24" />}
+                      </Field>
+                      <Field label="Effective from">
+                        {(fid) => (
+                          <input id={fid} type="date" value={editFoodDate}
+                            onChange={(ev) => setEditFoodDate(ev.target.value)}
+                            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
+                        )}
+                      </Field>
+                      <div className="flex gap-1">
+                        <button type="button" onClick={async () => {
+                          await editWorkerFoodAmount(existing.id, e.effectiveFrom, Number(editFoodAmt), editFoodDate)
+                          setEditFoodEntry(null)
+                        }} className="flex size-7 items-center justify-center rounded-md text-success hover:bg-success/10">
+                          <Check className="size-3.5" />
+                        </button>
+                        <button type="button" onClick={() => setEditFoodEntry(null)}
+                          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted">
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={e.effectiveFrom} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/50">
+                      <div className="text-sm">
+                        <span className="font-medium">{money(e.amount)}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">from {formatDate(e.effectiveFrom)}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => { setEditFoodEntry(e.effectiveFrom); setEditFoodAmt(String(e.amount)); setEditFoodDate(e.effectiveFrom) }}
+                          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                          <Pencil className="size-3.5" />
+                        </button>
+                        <button type="button" onClick={() => setDelFoodEntry(e.effectiveFrom)}
+                          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                )}
+            </div>
+          )}
+        </div>
+      )}
+
       <Field label="Notes">
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
       </Field>
@@ -383,6 +477,17 @@ export function WorkerForm() {
         title="Delete this wage rate?"
         description="Attendance dated within this rate's period will be recosted using the previous effective rate."
         onConfirm={() => delEntry && deleteWage(delEntry)}
+      />
+
+      <ConfirmDialog
+        open={delFoodEntry != null}
+        onOpenChange={(o) => !o && setDelFoodEntry(null)}
+        title="Delete this food amount?"
+        description="Food for attendance on and after this date will revert to the previous effective amount or the flat setting."
+        onConfirm={async () => {
+          if (delFoodEntry && existing) await removeWorkerFoodAmount(existing.id, delFoodEntry)
+          setDelFoodEntry(null)
+        }}
       />
     </FormScaffold>
   )

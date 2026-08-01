@@ -407,3 +407,64 @@ npm run test       # vitest — pure compute unit tests
 npm run build && npx cap add android && npm run android:patch && npx cap sync android
 cd android && ./gradlew assembleDebug   # → android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+---
+
+## Recent changes (session — bill/print refactor + payment popup)
+
+### Transaction tags
+`SyncedTransaction.tags?: string[]` stores the raw tags from the FinSight export. `sync.ts` parses
+them via `TAGS_KEYS`/`normTags()` and persists them on every insert and update. They are shown in
+both the `ReviewRow` list item and the `AssignPopup` header so context is always visible while assigning.
+
+### Payment review — popup assign flow
+The review queue (`screens/payments/Payments.tsx`) now shows a **`ReviewRow`** compact list.
+Tapping a row opens **`AssignPopup`** (`screens/payments/AssignPopup.tsx`):
+- **Tag pre-matching** — `suggestFromTags()` scans tags against worker/owner/building/floor names
+  and pre-fills fields. Suggestions only; user confirms.
+- **`Assign & next`** — saves and advances to the next transaction.
+- **`Assign & close`** — saves and closes the popup.
+- Arrow navigation in the popup header to browse the queue without assigning.
+- Deduplication: unchanged — strictly on UUID `id`; tags never affect dedup.
+
+### Worker effective-dated food history
+`Worker.foodHistory?: FoodEntry[]` (`{ effectiveFrom, amount }[]`) mirrors `wageHistory`. Helpers
+in `repo.ts`: `setWorkerFoodAmount`, `editWorkerFoodAmount`, `removeWorkerFoodAmount`. `compute/food.ts`
+uses `foodBaseOnDate()` to resolve the effective amount per date; falls back to flat fields when no
+history exists. UI in `WorkerForm.tsx` mirrors the wage-history section.
+
+### Floor sort order
+`Mold.order?: number` — editable in `MoldForm.tsx`. `useMolds()` already sorts by `order`. The
+consolidated bill view also sorts billed floors by `order` explicitly.
+
+### Bill rendering — three paths
+All three renderers (React preview, web print, Android jsPDF) must be kept in sync:
+
+1. **React preview** (`BillView.tsx`) — `FloorSheet` JSX + `PrintWrap` thead/tfoot wrapper.
+2. **Web print** — same React DOM via `window.print()`; `index.css` `@media print` rules apply.
+   `.bill-foot { position: fixed; bottom: 0 }` repeats the signature on every printed page.
+3. **Android PDF** (`billPdf.ts`) — `shareBillPdf()` + `drawPageHead()` + `drawSignatureFoot()`
+   post-pass loop draws the signature on every page. Font size and row padding are threaded via
+   `BillPdfSheet.fontSize` / `BillPdfSheet.rowPad` into all autoTable `styles`.
+
+### Bill header (all paths)
+- No building-details info block.
+- Header: bill date left, contact right.
+- Centered title: `{buildingName} — {floorName}` (single) / `{buildingName} — Bill Summary` (consolidated).
+
+### Consolidated bill
+- No layout designer — only font/row-size sliders.
+- Floors rendered in `sortOrder` (ascending by `mold.order`).
+- Summary table: **Floor | Area | Amount | Extras | Advance | Total**.
+
+### Bill preview zoom / pan
+`useBillZoomPan()` hook wraps both `MoldBillView` and `BuildingBillView` bill cards:
+- `−` / `+` buttons + Ctrl+wheel adjust CSS `scale()` transform.
+- Pointer drag pans the `overflow-auto` wrapper.
+- Multi-column measurement tables are contained within the wrapper (no overflow outside the page border).
+
+### Dark-mode contrast fixes
+- Inactive category chips: `text-foreground/70` (was `text-muted-foreground`).
+- Tag text in `ReviewRow`: `text-muted-foreground` (was `/70` opacity).
+- Tag chips in `AssignPopup`: `bg-secondary border border-border font-medium text-secondary-foreground`.
+

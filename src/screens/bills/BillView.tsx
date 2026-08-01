@@ -325,29 +325,24 @@ function usePortraitPrint() {
 /* Shared printable sheet pieces                                       */
 /* ------------------------------------------------------------------ */
 
-function SheetInfo({
-  building,
-  owner,
-  mold,
+/** Compact bill header: bill date left, contact right, title centred below. */
+function BillHeader({
+  title,
+  billDate,
 }: {
-  building: Building
-  owner?: Owner
-  mold?: Mold
+  title: string
+  billDate?: string
 }) {
-  const name = buildingName(building, byId(owner ? [owner] : []))
+  const date = billDate || todayISO()
   return (
-    <div className="bill-info grid grid-cols-1 gap-x-6 gap-y-0.5 border-b-2 border-foreground pb-3 text-[13px] sm:grid-cols-2">
-      <p><b>Owner:</b> {owner?.name ?? '—'}</p>
-      <p><b>Location:</b> {building.location ?? '—'}</p>
-      <p><b>Building:</b> {name}</p>
-      <p><b>Period:</b> {formatDate(building.startDate)} → {formatDate(building.endDate)}</p>
-      {mold && (
-        <>
-          <p><b>Floor:</b> {mold.floorName}</p>
-          <p><b>Floor period:</b> {formatDate(mold.startDate)} → {formatDate(mold.removedDate ?? mold.completedDate)}</p>
-        </>
-      )}
-      <p><b>Bill date:</b> {formatDate(todayISO())}</p>
+    <div className="bill-header mb-3 border-b-2 border-foreground pb-2">
+      <div className="flex items-baseline justify-between text-[11px] text-muted-foreground">
+        <span>{formatDate(date)}</span>
+        <span>{CONTACT}</span>
+      </div>
+      <h2 className="bill-title mt-1 text-center text-sm font-bold uppercase tracking-[0.15em]">
+        {title}
+      </h2>
     </div>
   )
 }
@@ -419,13 +414,12 @@ function FloorSheet({
   const u = bill.unit
   const cols = applySplit(bill.sections, layout)
   const colFr = cols.map(() => '1fr').join(' ')
+  const bName = buildingName(building, byId(owner ? [owner] : []))
+  const title = `${bName} — ${mold.floorName}`
   return (
     <section className="bill-sheet space-y-3" style={{ fontSize }}>
-      <h2 className="bill-title text-center text-sm font-bold uppercase tracking-[0.2em]">
-        Centering Work Bill — {mold.floorName}
-      </h2>
-      <SheetInfo building={building} owner={owner} mold={mold} />
-      <div className="bill-meas-cols items-start gap-x-4" style={{ display: 'grid', gridTemplateColumns: colFr }}>
+      <BillHeader title={title} billDate={bill.billDate} />
+      <div className="bill-meas-cols items-start gap-x-4 overflow-hidden" style={{ display: 'grid', gridTemplateColumns: colFr }}>
         {cols.map((colSecs, ci) => (
           <div key={ci}>{colSecs.map((s) => <SectionTable key={s.id} s={s} u={u} rowPad={rowPad} />)}</div>
         ))}
@@ -508,8 +502,49 @@ function SignatureFoot() {
   )
 }
 
-/** Wrap sheet content in a table so the company head (thead) and signature
- * foot (tfoot) repeat on every printed page. */
+/** Zoom + one-finger drag-to-pan (mirrors the Weekly maximize pattern). */
+function useBillZoomPan() {
+  const [zoom, setZoom] = React.useState(1)
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const dragRef = React.useRef<{ id: number; startX: number; startY: number; scrollX: number; scrollY: number } | null>(null)
+
+  function clampZoom(v: number) { return Math.min(3, Math.max(0.5, v)) }
+
+  function onWheel(e: React.WheelEvent) {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      setZoom((z) => clampZoom(z - e.deltaY * 0.005))
+    }
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === 'touch') return // let pinch handle two fingers
+    const el = containerRef.current
+    if (!el) return
+    dragRef.current = { id: e.pointerId, startX: e.clientX, startY: e.clientY, scrollX: el.scrollLeft, scrollY: el.scrollTop }
+    el.setPointerCapture(e.pointerId)
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    const el = containerRef.current
+    if (!drag || !el || drag.id !== e.pointerId) return
+    const dx = e.clientX - drag.startX
+    const dy = e.clientY - drag.startY
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+      el.scrollLeft = drag.scrollX - dx
+      el.scrollTop = drag.scrollY - dy
+    }
+  }
+
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.id === e.pointerId) dragRef.current = null
+  }
+
+  return { zoom, setZoom: (v: number) => setZoom(clampZoom(v)), containerRef, onWheel, onPointerDown, onPointerMove, onPointerUp }
+}
+
+
 function PrintWrap({ meta, children }: { meta: string; children: React.ReactNode }) {
   return (
     <table className="bill-print-table w-full border-collapse">
@@ -540,26 +575,11 @@ function PrintWrap({ meta, children }: { meta: string; children: React.ReactNode
 /* Native print — build jspdf sheets and hand off to the share sheet   */
 /* ------------------------------------------------------------------ */
 
-function sheetInfoPairs(building: Building, owner: Owner | undefined, name: string, mold?: Mold): [string, string][] {
-  const info: [string, string][] = [
-    ['Owner', owner?.name ?? '—'],
-    ['Location', building.location ?? '—'],
-    ['Building', name],
-    ['Period', `${formatDate(building.startDate)} → ${formatDate(building.endDate)}`],
-  ]
-  if (mold) {
-    info.push(['Floor', mold.floorName])
-    info.push(['Floor period', `${formatDate(mold.startDate)} → ${formatDate(mold.removedDate ?? mold.completedDate)}`])
-  }
-  info.push(['Bill date', formatDate(todayISO())])
-  return info
-}
-
-function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold, layout?: LayoutState): BillPdfSheet {
+function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold, fontSize = 13, rowPad = 4): BillPdfSheet {
   const bill = mold.bill!
   const t = billTotals(bill)
   const u = bill.unit
-  const cols = applySplit(bill.sections, layout)
+  const cols = applySplit(bill.sections)
   const toPdfSection = (s: BillSection) => ({
     name: s.name,
     rows: s.rows
@@ -579,41 +599,47 @@ function floorPdfSheet(building: Building, owner: Owner | undefined, name: strin
     summary.push({ label: 'BALANCE DUE', value: money(t.balance, true), strong: true, tone: 'success' })
   }
   return {
-    title: `Centering Work Bill — ${mold.floorName}`,
-    info: sheetInfoPairs(building, owner, name, mold),
+    title: `${name} — ${mold.floorName}`,
+    billDate: bill.billDate,
     measureCols: { cols: cols.map((colSecs) => colSecs.map(toPdfSection)) },
     recap: {
       lines: bill.sections.map((s) => [s.name, areaDisplay(sectionTotal(s), u)] as [string, string]),
       total: ['Total area', `${areaDisplay(t.sqft, u)} sqft${u === 'ftin' ? ` (${t.sqft})` : ''}`],
     },
     summary,
+    fontSize,
+    rowPad,
   }
 }
 
-function consolidatedPdfSheet(building: Building, owner: Owner | undefined, name: string, billed: Mold[]): BillPdfSheet {
+function consolidatedPdfSheet(name: string, billed: Mold[], fontSize = 13, rowPad = 4): BillPdfSheet {
   const totals = billed.map((m) => billTotals(m.bill!))
   const grand = totals.reduce((s, t) => s + t.total, 0)
   const grandAdvance = totals.reduce((s, t) => s + t.advance, 0)
-  const rows = billed.map((m) => {
-    const t = billTotals(m.bill!)
+  const rows = billed.map((m, i) => {
+    const t = totals[i]
     return [
       m.floorName,
       areaDisplay(t.sqft, m.bill!.unit),
-      money(t.areaAmount + t.extrasAmount, true),
+      money(t.areaAmount, true),
+      money(t.extrasAmount, true),
       t.advance > 0 ? money(t.advance, true) : '—',
       money(t.total, true),
     ]
   })
-  const summary: BillPdfSheet['summary'] = [{ label: 'GRAND TOTAL (building)', value: money(grand, true), strong: true, tone: 'primary' as const }]
+  const summary: BillPdfSheet['summary'] = [
+    { label: `${name} — Grand Total`, value: money(grand, true), strong: true, tone: 'primary' as const },
+  ]
   if (grandAdvance > 0) {
     summary.push({ label: 'Less: total advance received', value: `− ${money(grandAdvance, true)}`, tone: 'danger' })
-    summary.push({ label: 'NET BALANCE DUE', value: money(grand - grandAdvance, true), strong: true, tone: 'success' })
+    summary.push({ label: 'Net Balance Due', value: money(grand - grandAdvance, true), strong: true, tone: 'success' })
   }
   return {
-    title: 'Consolidated Bill — Full Building',
-    info: sheetInfoPairs(building, owner, name),
-    table: { head: ['Floor', 'Area (sqft)', 'Amount', 'Advance', 'Total'], rows },
+    title: `${name} — Bill Summary`,
+    table: { head: ['Floor', 'Area', 'Amount', 'Extras', 'Advance', 'Total'], rows },
     summary,
+    fontSize,
+    rowPad,
   }
 }
 
@@ -649,6 +675,7 @@ export function MoldBillView() {
 
   const sections = mold?.bill?.sections ?? []
   const { layout, setLayout, fontSize, setFontSize, rowPad, setRowPad } = usePrintPrefs(id, sections)
+  const zp = useBillZoomPan()
 
   if (!mold || !building) return <PageHeader title="Bill" back />
 
@@ -673,7 +700,7 @@ export function MoldBillView() {
                 onClick={() =>
                   void printBill(
                     `${name} · ${mold.floorName} · Centering Work Bill · ${formatDate(todayISO())}`,
-                    [floorPdfSheet(building, owner, name, mold, layout)],
+                      [floorPdfSheet(building, owner, name, mold, fontSize, rowPad)],
                   )
                 }
                 aria-label="Print"
@@ -715,17 +742,34 @@ export function MoldBillView() {
               rowPad={rowPad}
               onRowPad={setRowPad}
             />
-            <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
-              <PrintWrap meta={`${name} · ${mold.floorName} · ${formatDate(todayISO())}`}>
-                <FloorSheet
-                  building={building}
-                  owner={owner}
-                  mold={mold}
-                  layout={layout}
-                  fontSize={fontSize}
-                  rowPad={rowPad}
-                />
-              </PrintWrap>
+            {/* zoom controls */}
+            <div className="mb-2 flex items-center gap-2 print:hidden">
+              <Button variant="outline" size="icon" className="h-7 w-7 text-lg" onClick={() => zp.setZoom(zp.zoom - 0.1)}>−</Button>
+              <span className="min-w-[3rem] text-center text-xs text-muted-foreground">{Math.round(zp.zoom * 100)}%</span>
+              <Button variant="outline" size="icon" className="h-7 w-7 text-lg" onClick={() => zp.setZoom(zp.zoom + 0.1)}>+</Button>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => zp.setZoom(1)}>Reset</Button>
+            </div>
+            <div
+              ref={zp.containerRef}
+              className="overflow-auto rounded-xl border border-border bg-muted/20 p-4 shadow-card print:overflow-visible print:p-0"
+              onWheel={zp.onWheel}
+              onPointerDown={zp.onPointerDown}
+              onPointerMove={zp.onPointerMove}
+              onPointerUp={zp.onPointerUp}
+              style={{ cursor: 'grab' }}
+            >
+              <div style={{ transform: `scale(${zp.zoom})`, transformOrigin: 'top left', width: `${100 / zp.zoom}%` }}>
+                <PrintWrap meta={`${name} · ${mold.floorName} · ${formatDate(todayISO())}`}>
+                  <FloorSheet
+                    building={building}
+                    owner={owner}
+                    mold={mold}
+                    layout={layout}
+                    fontSize={fontSize}
+                    rowPad={rowPad}
+                  />
+                </PrintWrap>
+              </div>
             </div>
           </>
         )}
@@ -747,48 +791,13 @@ export function BuildingBillView() {
   const txns = useTransactionsForBuilding(id)
   void txns
 
-  const billed = molds.filter((m) => m.bill)
+  const billed = molds.filter((m) => m.bill).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
   const allSections = billed.flatMap((m) => m.bill!.sections)
 
   // Shared prefs persisted under the building id (consolidated view)
   const { layout: sharedLayout, setLayout: setSharedLayout, fontSize, setFontSize, rowPad, setRowPad } =
     usePrintPrefs(id ? `building-${id}` : undefined, allSections)
-
-  // Per-floor layout — each floor loads/saves independently
-  const [floorLayouts, setFloorLayouts] = React.useState<Record<string, LayoutState>>({})
-
-  React.useEffect(() => {
-    setFloorLayouts((prev) => {
-      const next = { ...prev }
-      let changed = false
-      for (const m of billed) {
-        if (!next[m.id] && m.bill) {
-          next[m.id] = loadPrefs(m.id)?.layout ?? defaultLayout(m.bill.sections)
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [billed.length])
-
-  function handleLayout(newLayout: LayoutState) {
-    setSharedLayout(newLayout)
-    // Distribute same column structure per floor
-    setFloorLayouts((prev) => {
-      const next = { ...prev }
-      for (const m of billed) {
-        const secs = m.bill!.sections
-        const floorCols = newLayout.cols.map((col) =>
-          col.map((sid) => secs.find((s) => s.id === sid)?.id).filter(Boolean) as string[]
-        )
-        const updated = { cols: floorCols }
-        next[m.id] = updated
-        savePrefs(m.id, { layout: updated, fontSize, rowPad })
-      }
-      return next
-    })
-  }
+  const zp = useBillZoomPan()
 
   if (!building) return <PageHeader title="Consolidated bill" back />
 
@@ -810,8 +819,8 @@ export function BuildingBillView() {
               size="icon"
               onClick={() =>
                 void printBill(`${name} · Consolidated Bill · ${formatDate(todayISO())}`, [
-                  consolidatedPdfSheet(building, owner, name, billed),
-                  ...billed.map((m) => floorPdfSheet(building, owner, name, m, floorLayouts[m.id])),
+                  ...billed.map((m) => floorPdfSheet(building, owner, name, m, fontSize, rowPad)),
+                  consolidatedPdfSheet(name, billed, fontSize, rowPad),
                 ])
               }
               aria-label="Print"
@@ -830,78 +839,106 @@ export function BuildingBillView() {
           />
         ) : (
           <>
-            <PrintControls
-              sections={allSections}
-              layout={sharedLayout}
-              onLayout={handleLayout}
-              fontSize={fontSize}
-              onFontSize={setFontSize}
-              rowPad={rowPad}
-              onRowPad={setRowPad}
-            />
-            <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6">
+            {/* Font/row size controls only — no layout designer for consolidated */}
+            <div className="print-hide space-y-3 rounded-xl border border-border bg-card p-4 shadow-card">
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Print settings</p>
+              <div className="flex items-center gap-3">
+                <span className="w-28 text-xs text-muted-foreground">Font size: {fontSize}px</span>
+                <input type="range" min={9} max={16} step={0.5} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} className="flex-1" />
+                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setFontSize(13)}>reset</button>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="w-28 text-xs text-muted-foreground">Row spacing: {rowPad}px</span>
+                <input type="range" min={1} max={8} step={0.5} value={rowPad} onChange={(e) => setRowPad(Number(e.target.value))} className="flex-1" />
+                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setRowPad(4)}>reset</button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 shadow-card sm:p-6" style={{ fontSize }}>
+            {/* zoom controls */}
+            <div className="mb-2 flex items-center gap-2 print:hidden">
+              <Button variant="outline" size="icon" className="h-7 w-7 text-lg" onClick={() => zp.setZoom(zp.zoom - 0.1)}>−</Button>
+              <span className="min-w-[3rem] text-center text-xs text-muted-foreground">{Math.round(zp.zoom * 100)}%</span>
+              <Button variant="outline" size="icon" className="h-7 w-7 text-lg" onClick={() => zp.setZoom(zp.zoom + 0.1)}>+</Button>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => zp.setZoom(1)}>Reset</Button>
+            </div>
+            <div
+              ref={zp.containerRef}
+              className="overflow-auto rounded-xl border border-border bg-muted/20 p-4 shadow-card print:overflow-visible print:p-0"
+              onWheel={zp.onWheel}
+              onPointerDown={zp.onPointerDown}
+              onPointerMove={zp.onPointerMove}
+              onPointerUp={zp.onPointerUp}
+              style={{ cursor: 'grab' }}
+            >
+              <div style={{ transform: `scale(${zp.zoom})`, transformOrigin: 'top left', width: `${100 / zp.zoom}%`, fontSize }}>
               <PrintWrap meta={`${name} · Consolidated bill · ${formatDate(todayISO())}`}>
                 <section className="space-y-3">
-                  <h2 className="text-center text-sm font-bold uppercase tracking-[0.2em]">
-                    Consolidated Bill — Full Building
-                  </h2>
-                  <SheetInfo building={building} owner={owner} />
-                  <table className="w-full border-collapse text-[13px]">
-                    <thead>
-                      <tr className="[&>th]:border [&>th]:border-border [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:py-1 [&>th]:text-[11px] [&>th]:uppercase">
-                        <th className="text-left">Floor</th>
-                        <th>Area (sqft)</th>
-                        <th>Amount</th>
-                        <th>Advance</th>
-                        <th>Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="[&>tr>td]:border [&>tr>td]:border-border [&>tr>td]:px-2 [&>tr>td]:py-1 [&>tr>td]:text-center">
-                      {billed.map((m) => {
-                        const t = billTotals(m.bill!)
-                        return (
-                          <tr key={m.id}>
-                            <td className="!text-left font-medium">{m.floorName}</td>
-                            <td className="tabular">{areaDisplay(t.sqft, m.bill!.unit)}</td>
-                            <td className="tabular">{money(t.areaAmount + t.extrasAmount, true)}</td>
-                            <td className="tabular">{t.advance > 0 ? money(t.advance, true) : '—'}</td>
-                            <td className="tabular font-semibold">{money(t.total, true)}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                  <div className="border-t-2 border-foreground pt-1">
-                    <div className="mt-1 flex items-baseline justify-between gap-3 border-t-4 border-double border-foreground px-1.5 pt-2.5 text-lg font-extrabold text-primary">
-                      <span>GRAND TOTAL (building)</span>
-                      <span className="tabular whitespace-nowrap">{money(grand, true)}</span>
-                    </div>
-                    {grandAdvance > 0 && (
-                      <>
-                        <Row label="Less: total advance received" value={`− ${money(grandAdvance, true)}`} className="text-destructive" />
-                        <div className="flex items-baseline justify-between gap-3 px-1.5 py-1 text-base font-bold text-success">
-                          <span>NET BALANCE DUE</span>
-                          <span className="tabular whitespace-nowrap">{money(grand - grandAdvance, true)}</span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Per-floor detail sheets */}
+                  {/* Per-floor detail sheets first */}
                   {billed.map((m) => (
-                    <div key={m.id} className="bill-page-break border-t border-dashed border-border pt-4">
+                    <div key={m.id} className="bill-page-break border-t border-dashed border-border pt-4 first:border-0 first:pt-0">
                       <FloorSheet
                         building={building}
                         owner={owner}
                         mold={m}
-                        layout={floorLayouts[m.id]}
                         fontSize={fontSize}
                         rowPad={rowPad}
                       />
                     </div>
                   ))}
+
+                  {/* Summary table on last page */}
+                  <div className="bill-page-break border-t-2 border-foreground pt-4">
+                    <BillHeader title={`${name} — Bill Summary`} />
+                    <table className="w-full border-collapse text-[13px]" style={{ fontSize }}>
+                      <thead>
+                        <tr className="[&>th]:border [&>th]:border-border [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:py-1 [&>th]:text-[11px] [&>th]:uppercase">
+                          <th className="text-left">Floor</th>
+                          <th>Area</th>
+                          <th>Amount</th>
+                          <th>Extras</th>
+                          <th>Advance</th>
+                          <th>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="[&>tr>td]:border [&>tr>td]:border-border [&>tr>td]:px-2 [&>tr>td]:py-1 [&>tr>td]:text-center">
+                        {billed.map((m, i) => {
+                          const t = totals[i]
+                          return (
+                            <tr key={m.id}>
+                              <td className="!text-left font-medium">{m.floorName}</td>
+                              <td className="tabular">{areaDisplay(t.sqft, m.bill!.unit)}</td>
+                              <td className="tabular">{money(t.areaAmount, true)}</td>
+                              <td className="tabular">{money(t.extrasAmount, true)}</td>
+                              <td className="tabular">{t.advance > 0 ? money(t.advance, true) : '—'}</td>
+                              <td className="tabular font-semibold">{money(t.total, true)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    <div className="mt-4 border-t-4 border-double border-foreground pt-3 text-[13.5px]">
+                      <div className="flex items-baseline justify-between gap-3 px-1.5 py-2 text-lg font-extrabold text-primary">
+                        <span>Grand Total</span>
+                        <span className="tabular whitespace-nowrap">{money(grand, true)}</span>
+                      </div>
+                      {grandAdvance > 0 && (
+                        <>
+                          <div className="flex items-baseline justify-between gap-3 px-1.5 py-2 text-destructive">
+                            <span>Less: Total Advance</span>
+                            <span className="tabular whitespace-nowrap">− {money(grandAdvance, true)}</span>
+                          </div>
+                          <div className="mt-2 flex items-baseline justify-between gap-3 border-t border-foreground px-1.5 py-2 text-base font-bold text-success">
+                            <span>Net Balance Due</span>
+                            <span className="tabular whitespace-nowrap">{money(grand - grandAdvance, true)}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </section>
               </PrintWrap>
+              </div>
+            </div>
             </div>
           </>
         )}

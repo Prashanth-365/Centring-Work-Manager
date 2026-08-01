@@ -33,6 +33,7 @@ const SUB_KEYS = ['subCategory', 'subcategory', 'subCat', 'sub']
 const DESC_KEYS = ['description', 'note', 'notes', 'desc', 'remark', 'remarks', 'narration', 'particulars']
 const DIR_KEYS = ['direction', 'txnType', 'type', 'flow', 'kind', 'drcr']
 const FP_KEYS = ['importFingerprint', 'fingerprint', 'fp']
+const TAGS_KEYS = ['tags', 'tag', 'labels', 'label']
 
 /** Membership set of normalized names that auto-match to a non-default type. */
 const DEFAULT_MATCH_KEYS: Record<string, true> = Object.fromEntries(
@@ -76,6 +77,13 @@ function normDir(v: unknown, type: SubCategory): TxnDirection {
   return type === 'OwnerReceipt' ? 'credit' : 'debit'
 }
 
+function normTags(v: unknown): string[] | undefined {
+  if (!v) return undefined
+  if (Array.isArray(v)) return (v as unknown[]).map(String).filter(Boolean)
+  if (typeof v === 'string' && v.trim()) return [v.trim()]
+  return undefined
+}
+
 export interface RawTxn {
   id: string
   date: string
@@ -88,6 +96,7 @@ export interface RawTxn {
   typeName?: string
   importFingerprint?: string
   description?: string
+  tags?: string[]
 }
 
 // ---- documented shape (category hierarchy) --------------------------------
@@ -182,12 +191,13 @@ function extractDocumented(root: unknown): RawTxn[] | null {
       typeName: rawName || undefined,
       importFingerprint: strOrUndef(pick(t, FP_KEYS)),
       description: strOrUndef(pick(t, DESC_KEYS)),
+      tags: normTags(pick(t, TAGS_KEYS)),
     })
   }
   return out
 }
 
-// ---- heuristic fallback (string category fields) --------------------------
+// ---- heuristic fallback
 
 function looksLikeTxn(o: unknown): boolean {
   if (!o || typeof o !== 'object') return false
@@ -253,6 +263,7 @@ function extractHeuristic(root: unknown): RawTxn[] {
       typeName: rawName || undefined,
       importFingerprint: strOrUndef(pick(t, FP_KEYS)),
       description: strOrUndef(pick(t, DESC_KEYS)),
+      tags: normTags(pick(t, TAGS_KEYS)),
     })
   }
   return out
@@ -341,6 +352,7 @@ export async function syncConstruction(raw: RawTxn[]): Promise<Omit<SyncResult, 
           typeName: r.typeName,
           importFingerprint: r.importFingerprint,
           description: r.description,
+          tags: r.tags,
           lastSeenAmount: r.amount,
           assignmentStatus: 'unassigned',
           firstSeenAt: ts,
@@ -383,6 +395,7 @@ export async function syncConstruction(raw: RawTxn[]): Promise<Omit<SyncResult, 
           typeName: r.typeName,
           importFingerprint: r.importFingerprint,
           description: r.description,
+          tags: r.tags,
           lastSeenAmount: r.amount,
           updatedAt: ts,
         }

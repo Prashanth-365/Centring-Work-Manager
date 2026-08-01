@@ -51,6 +51,7 @@ export function MoldForm() {
   const [completedDate, setCompletedDate] = React.useState('')
   const [removedDate, setRemovedDate] = React.useState('')
   const [notes, setNotes] = React.useState('')
+  const [order, setOrder] = React.useState<string>('')
   const [error, setError] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   const [confirmDel, setConfirmDel] = React.useState(false)
@@ -68,6 +69,7 @@ export function MoldForm() {
       setCompletedDate(existing.completedDate ?? '')
       setRemovedDate(existing.removedDate ?? '')
       setNotes(existing.notes ?? '')
+      setOrder(String(existing.order ?? ''))
     }
   }, [existing])
 
@@ -112,6 +114,7 @@ export function MoldForm() {
       completedDate: completedDate || undefined,
       removedDate: removedDate || undefined,
       notes: notes.trim() || undefined,
+      ...(order.trim() ? { order: Number(order) } : {}),
     }
     if (editing) {
       await updateMold(params.id!, data)
@@ -223,6 +226,20 @@ export function MoldForm() {
 
       <Field label="Notes">
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+
+      <Field label="Sort order" hint="Lower number = listed first. Leave blank to append automatically.">
+        {(fid) => (
+          <Input
+            id={fid}
+            type="number"
+            inputMode="numeric"
+            value={order}
+            onChange={(e) => setOrder(e.target.value)}
+            placeholder="e.g. 1, 2, 3…"
+            className="max-w-32"
+          />
+        )}
       </Field>
 
       <ConfirmDialog

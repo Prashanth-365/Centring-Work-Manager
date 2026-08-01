@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ReviewCard } from './ReviewCard'
+import { AssignPopup } from './AssignPopup'
 import {
   useAllMolds,
   useBuildings,
@@ -23,6 +23,79 @@ import { formatDate } from '@/lib/dates'
 import { money } from '@/lib/format'
 import type { OtherExpenseType, SubCategory, SyncedTransaction } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+/** Compact row in the review queue list. */
+function ReviewRow({
+  txn,
+  buildingsById,
+  ownersById,
+  workersById,
+  moldsById,
+  onClick,
+}: {
+  txn: SyncedTransaction
+  buildingsById: Map<string, import('@/lib/types').Building>
+  ownersById: Map<string, import('@/lib/types').Owner>
+  workersById: Map<string, import('@/lib/types').Worker>
+  moldsById: Map<string, import('@/lib/types').Mold>
+  onClick: () => void
+}) {
+  const isCredit = txn.direction === 'credit'
+  const needsReview = txn.assignmentStatus === 'needsReview'
+
+  let target = '—'
+  if (txn.buildingId) {
+    const b = buildingName(buildingsById.get(txn.buildingId), ownersById)
+    const m = txn.moldId ? moldsById.get(txn.moldId)?.floorName : undefined
+    target = m ? `${b} · ${m}` : b
+  } else if (txn.workerId) {
+    target = workersById.get(txn.workerId)?.name ?? 'Worker'
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full rounded-xl border border-border bg-card p-3.5 text-left shadow-card transition hover:border-primary/50 hover:shadow-md active:scale-[0.99]"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant={isCredit ? 'success' : 'secondary'} className="text-xs">
+              {txn.subCategory}
+            </Badge>
+            {needsReview && (
+              <Badge variant="warning" className="text-xs">
+                <RefreshCw className="size-3" />
+                changed
+              </Badge>
+            )}
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {formatDate(txn.date)}
+            {txn.description ? ` · ${txn.description}` : ''}
+          </p>
+          {(txn.tags ?? []).length > 0 && (
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              {txn.tags!.join(' · ')}
+            </p>
+          )}
+          {target !== '—' && (
+            <p className="mt-0.5 truncate text-xs font-medium text-foreground/80">{target}</p>
+          )}
+        </div>
+        <span
+          className={cn(
+            'shrink-0 font-bold tabular-nums',
+            isCredit ? 'text-green-600 dark:text-green-400' : 'text-foreground',
+          )}
+        >
+          {money(txn.amount)}
+        </span>
+      </div>
+    </button>
+  )
+}
 
 interface CatDef {
   key: string
@@ -80,6 +153,7 @@ export function Payments() {
 
   // Deep-link state (Dashboard overhead → assigned tab, filtered by category + period).
   const [tab, setTab] = React.useState(() => (params.get('tab') === 'assigned' ? 'assigned' : 'review'))
+  const [popupIdx, setPopupIdx] = React.useState<number | null>(null)
   const [selected, setSelected] = React.useState<Set<string>>(
     () => new Set((params.get('cat') ?? '').split(',').filter(Boolean)),
   )
@@ -199,17 +273,37 @@ export function Payments() {
                 }
               />
             ) : (
-              sortedQueue.map((t) => (
-                <ReviewCard
-                  key={t.id}
-                  txn={t}
-                  buildings={buildings}
-                  owners={owners}
-                  workers={workers}
-                  molds={molds}
-                  otherTypes={otherTypes}
-                />
-              ))
+              <>
+                {sortedQueue.map((t, i) => (
+                  <ReviewRow
+                    key={t.id}
+                    txn={t}
+                    buildingsById={buildingsById}
+                    ownersById={ownersById}
+                    workersById={workersById}
+                    moldsById={moldsById}
+                    onClick={() => setPopupIdx(i)}
+                  />
+                ))}
+                {popupIdx !== null && (
+                  <AssignPopup
+                    txn={sortedQueue[popupIdx]}
+                    index={popupIdx}
+                    total={sortedQueue.length}
+                    buildings={buildings}
+                    owners={owners}
+                    workers={workers}
+                    molds={molds}
+                    otherTypes={otherTypes}
+                    onClose={() => setPopupIdx(null)}
+                    onNext={() => {
+                      const next = popupIdx + 1
+                      if (next < sortedQueue.length) setPopupIdx(next)
+                      else setPopupIdx(null)
+                    }}
+                  />
+                )}
+              </>
             )}
           </TabsContent>
 
@@ -243,7 +337,7 @@ export function Payments() {
                       'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition',
                       selected.size === 0
                         ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border text-muted-foreground',
+                        : 'border-border text-foreground/70 hover:text-foreground',
                     )}
                   >
                     All
@@ -259,11 +353,11 @@ export function Payments() {
                           'shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition',
                           on
                             ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border text-muted-foreground',
+                            : 'border-border text-foreground/70 hover:text-foreground',
                         )}
                       >
                         {d.label}
-                        {n > 0 && <span className="ml-1 opacity-60">{n}</span>}
+                        {n > 0 && <span className="ml-1 opacity-70">{n}</span>}
                       </button>
                     )
                   })}

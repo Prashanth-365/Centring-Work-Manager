@@ -537,6 +537,22 @@ export function BillEditor() {
           </p>
         </div>
 
+        {/* Bill date */}
+        <div className="space-y-2 rounded-xl border border-border bg-card p-3 shadow-card">
+          <Field label="Bill date (shown top-left on the printed bill)">
+            {(fid) => (
+              <input
+                id={fid}
+                type="date"
+                value={bill.billDate ?? ''}
+                onChange={(e) => patch({ billDate: e.target.value || undefined })}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            )}
+          </Field>
+          <p className="text-xs text-muted-foreground">Leave blank to default to today.</p>
+        </div>
+
         {/* External PDF link (kept from the mold form) */}
         <div className="rounded-xl border border-border bg-card p-3 shadow-card">
           <Field label="Bill PDF link (optional)" hint="e.g. a Drive/WhatsApp link to a scanned or exported bill">

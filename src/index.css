@@ -269,7 +269,24 @@
   .bill-print-table > thead > tr > td {
     padding-bottom: 8px;
   }
-  .bill-print-table > tfoot > tr > td {
-    padding-top: 8px;
+  /* Signature footer: fixed to bottom of every page in print */
+  .bill-foot {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #fff !important;
+    padding: 4px 10mm 6px;
+    border-top: 1px solid #aaa;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  /* Prevent content from flowing under the fixed footer */
+  .bill-print-table > tbody > tr > td {
+    padding-bottom: 70px;
+  }
+  /* Remove tfoot since signature is now position:fixed */
+  .bill-print-table > tfoot {
+    display: none;
   }
 }
