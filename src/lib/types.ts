@@ -130,11 +130,21 @@ export interface WageEntry {
   dailyWage: number
 }
 
-/** A food amount effective from a date (mirrors WageEntry for wages). */
+/** A food configuration snapshot effective from a date (mirrors WageEntry for wages).
+ * The full food mode and all relevant amounts are stored so the computation can
+ * accurately reproduce costs for any historical date without depending on the
+ * current flat food fields. */
 export interface FoodEntry {
   effectiveFrom: string // 'yyyy-MM-dd'
-  /** Base amount (breakfast, lunch, perDay, or perWeek depending on foodMode). */
-  amount: number
+  foodMode: FoodMode
+  // meal mode
+  foodBreakfast: number
+  foodLunch: number
+  // fixedPerDay mode
+  foodPerDay: number
+  // fixedPerWeek mode
+  foodPerWeek: number
+  maxDaysPerWeek: number
 }
 
 export interface Worker {

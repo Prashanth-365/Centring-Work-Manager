@@ -66,10 +66,21 @@ export function WorkerForm() {
   const [editDate, setEditDate] = React.useState('')
   const [delEntry, setDelEntry] = React.useState<string | null>(null)
   // Inline food-history editing
-  const [foodAmt, setFoodAmt] = React.useState('')
+  const [foodHistMode, setFoodHistMode] = React.useState<FoodMode>('meal')
+  const [foodHistBreakfast, setFoodHistBreakfast] = React.useState('')
+  const [foodHistLunch, setFoodHistLunch] = React.useState('')
+  const [foodHistPerDay, setFoodHistPerDay] = React.useState('')
+  const [foodHistPerWeek, setFoodHistPerWeek] = React.useState('')
+  const [foodHistMaxDays, setFoodHistMaxDays] = React.useState('')
   const [foodEffective, setFoodEffective] = React.useState(todayISO())
+  // Edit existing entry
   const [editFoodEntry, setEditFoodEntry] = React.useState<string | null>(null)
-  const [editFoodAmt, setEditFoodAmt] = React.useState('')
+  const [editFoodMode, setEditFoodMode] = React.useState<FoodMode>('meal')
+  const [editFoodBreakfast, setEditFoodBreakfast] = React.useState('')
+  const [editFoodLunch, setEditFoodLunch] = React.useState('')
+  const [editFoodPerDay, setEditFoodPerDay] = React.useState('')
+  const [editFoodPerWeek, setEditFoodPerWeek] = React.useState('')
+  const [editFoodMaxDays, setEditFoodMaxDays] = React.useState('')
   const [editFoodDate, setEditFoodDate] = React.useState('')
   const [delFoodEntry, setDelFoodEntry] = React.useState<string | null>(null)
   const loaded = React.useRef(false)
@@ -377,52 +388,140 @@ export function WorkerForm() {
         <div className="space-y-2 rounded-xl border border-border bg-card p-3.5">
           <p className="text-sm font-semibold">Food amount history</p>
           <p className="text-xs text-muted-foreground">
-            Override the food amount for a specific date onwards. Leave empty to use the flat amounts above.
+            Add a food config that takes effect from a date. The most recent entry effective on or before a day is used.
           </p>
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label={`New amount (${foodMode === 'meal' ? '₹/day combined' : foodMode === 'fixedPerDay' ? '₹/day' : '₹/week'})`}>
-              {(fid) => (
-                <Input id={fid} type="number" inputMode="decimal" value={foodAmt}
-                  onChange={(e) => setFoodAmt(e.target.value)} className="w-28" />
-              )}
-            </Field>
-            <Field label="Effective from">
-              {(fid) => (
-                <input id={fid} type="date" value={foodEffective}
-                  onChange={(e) => setFoodEffective(e.target.value)}
-                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
-              )}
-            </Field>
-            <Button type="button" variant="outline" size="sm"
-              disabled={!foodAmt.trim() || !foodEffective}
-              onClick={async () => {
-                await setWorkerFoodAmount(existing.id, Number(foodAmt), foodEffective)
-                setFoodAmt('')
-                setFoodEffective(todayISO())
-              }}
-            >Add</Button>
+
+          {/* Add new entry form */}
+          <div className="space-y-2 rounded-lg border border-dashed border-border p-2.5">
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">
+              {FOOD_MODES.map((m) => (
+                <button key={m.value} type="button" onClick={() => setFoodHistMode(m.value)}
+                  className={cn('rounded-lg py-1.5 text-xs font-medium transition',
+                    foodHistMode === m.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground')}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {foodHistMode === 'meal' && (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Breakfast">
+                  {(fid) => <Input id={fid} type="number" inputMode="decimal" value={foodHistBreakfast} onChange={(e) => setFoodHistBreakfast(e.target.value)} placeholder="₹" />}
+                </Field>
+                <Field label="Lunch">
+                  {(fid) => <Input id={fid} type="number" inputMode="decimal" value={foodHistLunch} onChange={(e) => setFoodHistLunch(e.target.value)} placeholder="₹" />}
+                </Field>
+              </div>
+            )}
+            {foodHistMode === 'fixedPerDay' && (
+              <Field label="Food per full day">
+                {(fid) => <Input id={fid} type="number" inputMode="decimal" value={foodHistPerDay} onChange={(e) => setFoodHistPerDay(e.target.value)} placeholder="₹" />}
+              </Field>
+            )}
+            {foodHistMode === 'fixedPerWeek' && (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Food per week">
+                  {(fid) => <Input id={fid} type="number" inputMode="decimal" value={foodHistPerWeek} onChange={(e) => setFoodHistPerWeek(e.target.value)} placeholder="₹" />}
+                </Field>
+                <Field label="Max days/week">
+                  {(fid) => <Input id={fid} type="number" inputMode="decimal" value={foodHistMaxDays} onChange={(e) => setFoodHistMaxDays(e.target.value)} placeholder="10" />}
+                </Field>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <Field label="Effective from">
+                {(fid) => (
+                  <input id={fid} type="date" value={foodEffective}
+                    onChange={(e) => setFoodEffective(e.target.value)}
+                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
+                )}
+              </Field>
+              <Button type="button" variant="outline" size="sm"
+                disabled={!foodEffective || (
+                  foodHistMode === 'meal' ? (!foodHistBreakfast && !foodHistLunch) :
+                  foodHistMode === 'fixedPerDay' ? !foodHistPerDay :
+                  !foodHistPerWeek
+                )}
+                onClick={async () => {
+                  await setWorkerFoodAmount(existing.id, {
+                    effectiveFrom: foodEffective,
+                    foodMode: foodHistMode,
+                    foodBreakfast: Number(foodHistBreakfast) || 0,
+                    foodLunch: Number(foodHistLunch) || 0,
+                    foodPerDay: Number(foodHistPerDay) || 0,
+                    foodPerWeek: Number(foodHistPerWeek) || 0,
+                    maxDaysPerWeek: Number(foodHistMaxDays) || 10,
+                  })
+                  setFoodHistBreakfast(''); setFoodHistLunch(''); setFoodHistPerDay('')
+                  setFoodHistPerWeek(''); setFoodHistMaxDays('')
+                  setFoodEffective(todayISO())
+                  toast.success('Food entry added')
+                }}
+              >Add</Button>
+            </div>
           </div>
+
+          {/* History list */}
           {(existing.foodHistory ?? []).length > 0 && (
             <div className="mt-1 space-y-1.5">
               {[...(existing.foodHistory ?? [])]
                 .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))
                 .map((e) =>
                   editFoodEntry === e.effectiveFrom ? (
-                    <div key={e.effectiveFrom} className="flex flex-wrap items-end gap-2 rounded-lg bg-muted/50 px-2 py-2">
-                      <Field label="Amount">
-                        {(fid) => <Input id={fid} type="number" value={editFoodAmt} onChange={(ev) => setEditFoodAmt(ev.target.value)} className="w-24" />}
-                      </Field>
-                      <Field label="Effective from">
-                        {(fid) => (
-                          <input id={fid} type="date" value={editFoodDate}
-                            onChange={(ev) => setEditFoodDate(ev.target.value)}
-                            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
-                        )}
-                      </Field>
-                      <div className="flex gap-1">
+                    <div key={e.effectiveFrom} className="space-y-2 rounded-lg bg-muted/50 px-2 py-2">
+                      <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">
+                        {FOOD_MODES.map((m) => (
+                          <button key={m.value} type="button" onClick={() => setEditFoodMode(m.value)}
+                            className={cn('rounded-lg py-1.5 text-xs font-medium transition',
+                              editFoodMode === m.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground')}>
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                      {editFoodMode === 'meal' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field label="Breakfast">
+                            {(fid) => <Input id={fid} type="number" value={editFoodBreakfast} onChange={(ev) => setEditFoodBreakfast(ev.target.value)} />}
+                          </Field>
+                          <Field label="Lunch">
+                            {(fid) => <Input id={fid} type="number" value={editFoodLunch} onChange={(ev) => setEditFoodLunch(ev.target.value)} />}
+                          </Field>
+                        </div>
+                      )}
+                      {editFoodMode === 'fixedPerDay' && (
+                        <Field label="Food per full day">
+                          {(fid) => <Input id={fid} type="number" value={editFoodPerDay} onChange={(ev) => setEditFoodPerDay(ev.target.value)} />}
+                        </Field>
+                      )}
+                      {editFoodMode === 'fixedPerWeek' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field label="Food per week">
+                            {(fid) => <Input id={fid} type="number" value={editFoodPerWeek} onChange={(ev) => setEditFoodPerWeek(ev.target.value)} />}
+                          </Field>
+                          <Field label="Max days/week">
+                            {(fid) => <Input id={fid} type="number" value={editFoodMaxDays} onChange={(ev) => setEditFoodMaxDays(ev.target.value)} />}
+                          </Field>
+                        </div>
+                      )}
+                      <div className="flex items-end gap-2">
+                        <Field label="Effective from">
+                          {(fid) => (
+                            <input id={fid} type="date" value={editFoodDate}
+                              onChange={(ev) => setEditFoodDate(ev.target.value)}
+                              className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm" />
+                          )}
+                        </Field>
                         <button type="button" onClick={async () => {
-                          await editWorkerFoodAmount(existing.id, e.effectiveFrom, Number(editFoodAmt), editFoodDate)
+                          await editWorkerFoodAmount(existing.id, e.effectiveFrom, {
+                            effectiveFrom: editFoodDate,
+                            foodMode: editFoodMode,
+                            foodBreakfast: Number(editFoodBreakfast) || 0,
+                            foodLunch: Number(editFoodLunch) || 0,
+                            foodPerDay: Number(editFoodPerDay) || 0,
+                            foodPerWeek: Number(editFoodPerWeek) || 0,
+                            maxDaysPerWeek: Number(editFoodMaxDays) || 10,
+                          })
                           setEditFoodEntry(null)
+                          toast.success('Food entry updated')
                         }} className="flex size-7 items-center justify-center rounded-md text-success hover:bg-success/10">
                           <Check className="size-3.5" />
                         </button>
@@ -433,14 +532,27 @@ export function WorkerForm() {
                       </div>
                     </div>
                   ) : (
-                    <div key={e.effectiveFrom} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/50">
+                    <div key={e.effectiveFrom} className="flex items-start justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/50">
                       <div className="text-sm">
-                        <span className="font-medium">{money(e.amount)}</span>
+                        <span className="font-medium capitalize">{e.foodMode === 'meal' ? 'Per meal' : e.foodMode === 'fixedPerDay' ? 'Fixed/day' : 'Fixed/week'}</span>
                         <span className="ml-2 text-xs text-muted-foreground">from {formatDate(e.effectiveFrom)}</span>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {e.foodMode === 'meal' && `Breakfast ₹${e.foodBreakfast} · Lunch ₹${e.foodLunch}`}
+                          {e.foodMode === 'fixedPerDay' && `₹${e.foodPerDay}/day`}
+                          {e.foodMode === 'fixedPerWeek' && `₹${e.foodPerWeek}/week · max ${e.maxDaysPerWeek} days`}
+                        </div>
                       </div>
                       <div className="flex gap-1">
-                        <button type="button" onClick={() => { setEditFoodEntry(e.effectiveFrom); setEditFoodAmt(String(e.amount)); setEditFoodDate(e.effectiveFrom) }}
-                          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                        <button type="button" onClick={() => {
+                          setEditFoodEntry(e.effectiveFrom)
+                          setEditFoodMode(e.foodMode)
+                          setEditFoodBreakfast(String(e.foodBreakfast))
+                          setEditFoodLunch(String(e.foodLunch))
+                          setEditFoodPerDay(String(e.foodPerDay))
+                          setEditFoodPerWeek(String(e.foodPerWeek))
+                          setEditFoodMaxDays(String(e.maxDaysPerWeek))
+                          setEditFoodDate(e.effectiveFrom)
+                        }} className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                           <Pencil className="size-3.5" />
                         </button>
                         <button type="button" onClick={() => setDelFoodEntry(e.effectiveFrom)}

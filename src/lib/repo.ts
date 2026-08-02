@@ -215,25 +215,23 @@ import type { FoodEntry as FoodHistEntry } from './types'
 
 function withFood(
   worker: { foodHistory?: FoodHistEntry[] },
-  amount: number,
-  effectiveFrom: string,
+  entry: FoodHistEntry,
 ): FoodHistEntry[] {
   const hist = [...(worker.foodHistory ?? [])]
-  const idx = hist.findIndex((e) => e.effectiveFrom === effectiveFrom)
-  if (idx >= 0) hist[idx] = { effectiveFrom, amount }
-  else hist.push({ effectiveFrom, amount })
+  const idx = hist.findIndex((e) => e.effectiveFrom === entry.effectiveFrom)
+  if (idx >= 0) hist[idx] = entry
+  else hist.push(entry)
   return hist.sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : 1))
 }
 
 export async function setWorkerFoodAmount(
   id: string,
-  amount: number,
-  effectiveFrom: string,
+  entry: FoodHistEntry,
 ): Promise<void> {
   const worker = await db.workers.get(id)
   if (!worker) return
   await db.workers.update(id, {
-    foodHistory: withFood(worker, amount, effectiveFrom),
+    foodHistory: withFood(worker, entry),
     updatedAt: now(),
   })
 }
@@ -241,8 +239,7 @@ export async function setWorkerFoodAmount(
 export async function editWorkerFoodAmount(
   id: string,
   originalEffectiveFrom: string,
-  amount: number,
-  effectiveFrom: string,
+  entry: FoodHistEntry,
 ): Promise<void> {
   const worker = await db.workers.get(id)
   if (!worker) return
@@ -251,7 +248,7 @@ export async function editWorkerFoodAmount(
     foodHistory: (worker.foodHistory ?? []).filter((e) => e.effectiveFrom !== originalEffectiveFrom),
   }
   await db.workers.update(id, {
-    foodHistory: withFood(without, amount, effectiveFrom),
+    foodHistory: withFood(without, entry),
     updatedAt: now(),
   })
 }

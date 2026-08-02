@@ -61,9 +61,20 @@ function savePrefs(key: string, prefs: PrintPrefs) {
 }
 
 function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
+  /** Validate a saved layout — if any section id is missing from sections, fall back to default. */
+  function validateLayout(saved: LayoutState, secs: BillSection[]): LayoutState {
+    const ids = new Set(secs.map((s) => s.id))
+    const allPlaced = saved.cols.flat().every((id) => ids.has(id))
+    const placedIds = new Set(saved.cols.flat())
+    const allPresent = secs.every((s) => placedIds.has(s.id))
+    if (!allPlaced || !allPresent) return defaultLayout(secs)
+    return saved
+  }
+
   const [layout, setLayoutRaw] = React.useState<LayoutState>(() => {
     if (!key) return defaultLayout(sections)
-    return loadPrefs(key)?.layout ?? defaultLayout(sections)
+    const saved = loadPrefs(key)
+    return saved ? validateLayout(saved.layout, sections) : defaultLayout(sections)
   })
   const [fontSize, setFontSizeRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.fontSize ?? 13) : 13)
   const [rowPad, setRowPadRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.rowPad ?? 4) : 4)
@@ -74,10 +85,23 @@ function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
     if (!key || key === prevKey.current) return
     prevKey.current = key
     const saved = loadPrefs(key)
-    if (saved) { setLayoutRaw(saved.layout); setFontSizeRaw(saved.fontSize); setRowPadRaw(saved.rowPad) }
-    else { setLayoutRaw(defaultLayout(sections)); setFontSizeRaw(13); setRowPadRaw(4) }
+    if (saved) {
+      setLayoutRaw(validateLayout(saved.layout, sections))
+      setFontSizeRaw(saved.fontSize)
+      setRowPadRaw(saved.rowPad)
+    } else {
+      setLayoutRaw(defaultLayout(sections))
+      setFontSizeRaw(13)
+      setRowPadRaw(4)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
+
+  // Also re-validate when sections change (e.g. BillEditor added/removed a section).
+  React.useEffect(() => {
+    setLayoutRaw((prev) => validateLayout(prev, sections))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections.map((s) => s.id).join(',')])
 
   function setLayout(l: LayoutState) { setLayoutRaw(l); if (key) savePrefs(key, { layout: l, fontSize, rowPad }) }
   function setFontSize(v: number) { setFontSizeRaw(v); if (key) savePrefs(key, { layout, fontSize: v, rowPad }) }
@@ -507,6 +531,7 @@ function useBillZoomPan() {
   const [zoom, setZoom] = React.useState(1)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const dragRef = React.useRef<{ id: number; startX: number; startY: number; scrollX: number; scrollY: number } | null>(null)
+  const pinchRef = React.useRef<{ dist: number; zoom: number } | null>(null)
 
   function clampZoom(v: number) { return Math.min(3, Math.max(0.5, v)) }
 
@@ -518,7 +543,7 @@ function useBillZoomPan() {
   }
 
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (e.pointerType === 'touch') return // let pinch handle two fingers
+    if (e.pointerType === 'touch') return // handled by onTouchStart/onTouchMove
     const el = containerRef.current
     if (!el) return
     dragRef.current = { id: e.pointerId, startX: e.clientX, startY: e.clientY, scrollX: el.scrollLeft, scrollY: el.scrollTop }
@@ -540,6 +565,52 @@ function useBillZoomPan() {
   function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     if (dragRef.current?.id === e.pointerId) dragRef.current = null
   }
+
+  // Two-finger pinch zoom via Touch Events (non-passive so we can preventDefault).
+  // Attached imperatively in useEffect so we can pass { passive: false }.
+  React.useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    function getTouchDist(touches: TouchList) {
+      const dx = touches[0].clientX - touches[1].clientX
+      const dy = touches[0].clientY - touches[1].clientY
+      return Math.hypot(dx, dy)
+    }
+
+    function handleTouchStart(e: TouchEvent) {
+      if (e.touches.length === 2) {
+        pinchRef.current = { dist: getTouchDist(e.touches), zoom: 0 }
+        // Read current zoom from state — use a ref-based snapshot
+      }
+    }
+
+    function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length === 2 && pinchRef.current) {
+        e.preventDefault()
+        const newDist = getTouchDist(e.touches)
+        const scale = newDist / pinchRef.current.dist
+        setZoom((z) => {
+          const next = clampZoom(z * scale)
+          pinchRef.current!.dist = newDist
+          return next
+        })
+      }
+    }
+
+    function handleTouchEnd() {
+      if (pinchRef.current) pinchRef.current = null
+    }
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: true })
+    el.addEventListener('touchmove', handleTouchMove, { passive: false })
+    el.addEventListener('touchend', handleTouchEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', handleTouchStart)
+      el.removeEventListener('touchmove', handleTouchMove)
+      el.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [])
 
   return { zoom, setZoom: (v: number) => setZoom(clampZoom(v)), containerRef, onWheel, onPointerDown, onPointerMove, onPointerUp }
 }

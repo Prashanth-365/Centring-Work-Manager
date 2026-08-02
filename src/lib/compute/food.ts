@@ -19,7 +19,7 @@ import { dayFractionFromBlocks, mealFlags, normalizeBlocks } from './shifts'
 function foodBaseOnDate(
   worker: Worker,
   date: string,
-): { breakfast: number; lunch: number; perDay: number; perWeek: number } {
+): { breakfast: number; lunch: number; perDay: number; perWeek: number; maxDays: number; mode: Worker['foodMode'] } {
   const hist = worker.foodHistory
   if (hist && hist.length > 0) {
     // Find the entry with greatest effectiveFrom ≤ date (like wageOnDate).
@@ -29,25 +29,23 @@ function foodBaseOnDate(
       if (e.effectiveFrom <= date) entry = e
     }
     if (entry) {
-      // foodHistory stores a single `amount` that replaces the active flat field.
-      // Which field it overrides depends on foodMode.
-      if (worker.foodMode === 'meal') {
-        // For meal mode amount is the combined amount; split 1:2 breakfast:lunch.
-        const b = Math.round(entry.amount / 3)
-        const l = entry.amount - b
-        return { breakfast: b, lunch: l, perDay: 0, perWeek: 0 }
+      return {
+        mode: entry.foodMode,
+        breakfast: entry.foodBreakfast,
+        lunch: entry.foodLunch,
+        perDay: entry.foodPerDay,
+        perWeek: entry.foodPerWeek,
+        maxDays: entry.maxDaysPerWeek,
       }
-      if (worker.foodMode === 'fixedPerDay') {
-        return { breakfast: 0, lunch: 0, perDay: entry.amount, perWeek: 0 }
-      }
-      return { breakfast: 0, lunch: 0, perDay: 0, perWeek: entry.amount }
     }
   }
   return {
+    mode: worker.foodMode,
     breakfast: worker.foodBreakfast,
     lunch: worker.foodLunch,
     perDay: worker.foodPerDay ?? 0,
     perWeek: worker.foodPerWeek ?? 0,
+    maxDays: worker.maxDaysPerWeek,
   }
 }
 
@@ -61,11 +59,11 @@ export interface FoodEntry {
  * Pass `date` to use the effective-dated amount (foodHistory); omit for the flat fields. */
 export function mealFoodForBlocks(worker: Worker, blocks: number[], date?: string): number {
   const { breakfast, lunch } = mealFlags(blocks)
-  if (date) {
-    const base = foodBaseOnDate(worker, date)
-    return (breakfast ? base.breakfast : 0) + (lunch ? base.lunch : 0)
+  const base = date ? foodBaseOnDate(worker, date) : {
+    mode: worker.foodMode, breakfast: worker.foodBreakfast, lunch: worker.foodLunch,
+    perDay: worker.foodPerDay ?? 0, perWeek: worker.foodPerWeek ?? 0, maxDays: worker.maxDaysPerWeek,
   }
-  return (breakfast ? worker.foodBreakfast : 0) + (lunch ? worker.foodLunch : 0)
+  return (breakfast ? base.breakfast : 0) + (lunch ? base.lunch : 0)
 }
 
 /** Back-compat alias — meal food is computed from a set of blocks. */
@@ -111,20 +109,17 @@ export function dailyFoodBreakdown(
   entries: FoodEntry[],
 ): DailyFood[] {
   const days = unionByDay(entries)
-  if (worker.foodMode === 'meal') {
-    return days.map((d) => ({ ...d, foodAmount: mealFoodForBlocks(worker, d.blocks, d.date) }))
-  }
-  if (worker.foodMode === 'fixedPerDay') {
-    return days.map((d) => {
-      const per = foodBaseOnDate(worker, d.date).perDay
-      return { ...d, foodAmount: per * d.dayFraction }
-    })
-  }
-  // fixedPerWeek — even per-day attribution of the weekly figure.
-  const maxDays = worker.maxDaysPerWeek || 10
   return days.map((d) => {
-    const perWeek = foodBaseOnDate(worker, d.date).perWeek
-    return { ...d, foodAmount: (perWeek / maxDays) * d.dayFraction }
+    const base = foodBaseOnDate(worker, d.date)
+    if (base.mode === 'meal') {
+      return { ...d, foodAmount: mealFoodForBlocks(worker, d.blocks, d.date) }
+    }
+    if (base.mode === 'fixedPerDay') {
+      return { ...d, foodAmount: base.perDay * d.dayFraction }
+    }
+    // fixedPerWeek — even per-day attribution
+    const maxDays = base.maxDays || 10
+    return { ...d, foodAmount: (base.perWeek / maxDays) * d.dayFraction }
   })
 }
 
@@ -142,26 +137,22 @@ export function foodForEntries(
   if (entries.length === 0) return 0
   const days = unionByDay(entries)
 
-  if (worker.foodMode === 'meal') {
-    return days.reduce((s, d) => s + mealFoodForBlocks(worker, d.blocks, d.date), 0)
-  }
-
-  if (worker.foodMode === 'fixedPerDay') {
-    return days.reduce((s, d) => {
-      const per = foodBaseOnDate(worker, d.date).perDay
-      return s + per * d.dayFraction
-    }, 0)
-  }
-
-  // fixedPerWeek
-  const maxDays = worker.maxDaysPerWeek || 10
   const byWeekAmt = new Map<string, number>()
+  let mealAndDayTotal = 0
   for (const d of days) {
-    const k = weekKey(d.date, weekStartsOn)
-    const perWeek = foodBaseOnDate(worker, d.date).perWeek
-    byWeekAmt.set(k, (byWeekAmt.get(k) ?? 0) + perWeek * (d.dayFraction / maxDays))
+    const base = foodBaseOnDate(worker, d.date)
+    if (base.mode === 'meal') {
+      mealAndDayTotal += mealFoodForBlocks(worker, d.blocks, d.date)
+    } else if (base.mode === 'fixedPerDay') {
+      mealAndDayTotal += base.perDay * d.dayFraction
+    } else {
+      // fixedPerWeek — accumulate per week
+      const maxDays = base.maxDays || 10
+      const k = weekKey(d.date, weekStartsOn)
+      byWeekAmt.set(k, (byWeekAmt.get(k) ?? 0) + base.perWeek * (d.dayFraction / maxDays))
+    }
   }
-  let total = 0
-  for (const amt of byWeekAmt.values()) total += amt
-  return total
+  let weekTotal = 0
+  for (const amt of byWeekAmt.values()) weekTotal += amt
+  return mealAndDayTotal + weekTotal
 }
