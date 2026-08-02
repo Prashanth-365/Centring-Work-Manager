@@ -654,11 +654,11 @@ function PrintWrap({ meta, children }: { meta: string; children: React.ReactNode
 /* Native print — build jspdf sheets and hand off to the share sheet   */
 /* ------------------------------------------------------------------ */
 
-function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold, fontSize = 13, rowPad = 4): BillPdfSheet {
+function floorPdfSheet(building: Building, owner: Owner | undefined, name: string, mold: Mold, layout?: LayoutState, fontSize = 13, rowPad = 4): BillPdfSheet {
   const bill = mold.bill!
   const t = billTotals(bill)
   const u = bill.unit
-  const cols = applySplit(bill.sections)
+  const cols = applySplit(bill.sections, layout)
   const toPdfSection = (s: BillSection) => ({
     name: s.name,
     rows: s.rows
@@ -779,7 +779,7 @@ export function MoldBillView() {
                 onClick={() =>
                   void printBill(
                     `${name} · ${mold.floorName} · Centering Work Bill · ${formatDate(todayISO())}`,
-                      [floorPdfSheet(building, owner, name, mold, fontSize, rowPad)],
+                      [floorPdfSheet(building, owner, name, mold, layout, fontSize, rowPad)],
                   )
                 }
                 aria-label="Print"
@@ -878,6 +878,29 @@ export function BuildingBillView() {
     usePrintPrefs(id ? `building-${id}` : undefined, allSections)
   const zp = useBillZoomPan()
 
+  // Per-floor layout — each floor loads/saves independently (keyed by mold id)
+  const [floorLayouts, setFloorLayouts] = React.useState<Record<string, LayoutState>>({})
+  React.useEffect(() => {
+    setFloorLayouts((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const m of billed) {
+        if (!next[m.id] && m.bill) {
+          next[m.id] = loadPrefs(m.id)?.layout ?? defaultLayout(m.bill.sections)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [billed.length])
+
+  function handleFloorLayout(moldId: string, newLayout: LayoutState) {
+    setFloorLayouts((prev) => ({ ...prev, [moldId]: newLayout }))
+    const m = billed.find((b) => b.id === moldId)
+    if (m) savePrefs(moldId, { layout: newLayout, fontSize, rowPad })
+  }
+
   if (!building) return <PageHeader title="Consolidated bill" back />
 
   const name = buildingName(building, byId(owner ? [owner] : []))
@@ -898,7 +921,7 @@ export function BuildingBillView() {
               size="icon"
               onClick={() =>
                 void printBill(`${name} · Consolidated Bill · ${formatDate(todayISO())}`, [
-                  ...billed.map((m) => floorPdfSheet(building, owner, name, m, fontSize, rowPad)),
+                  ...billed.map((m) => floorPdfSheet(building, owner, name, m, floorLayouts[m.id], fontSize, rowPad)),
                   consolidatedPdfSheet(name, billed, fontSize, rowPad),
                 ])
               }
@@ -955,10 +978,22 @@ export function BuildingBillView() {
                   {/* Per-floor detail sheets first */}
                   {billed.map((m) => (
                     <div key={m.id} className="bill-page-break border-t border-dashed border-border pt-4 first:border-0 first:pt-0">
+                      <div className="print-hide mb-2">
+                        <PrintControls
+                          sections={m.bill!.sections}
+                          layout={floorLayouts[m.id] ?? defaultLayout(m.bill!.sections)}
+                          onLayout={(l) => handleFloorLayout(m.id, l)}
+                          fontSize={fontSize}
+                          onFontSize={setFontSize}
+                          rowPad={rowPad}
+                          onRowPad={setRowPad}
+                        />
+                      </div>
                       <FloorSheet
                         building={building}
                         owner={owner}
                         mold={m}
+                        layout={floorLayouts[m.id]}
                         fontSize={fontSize}
                         rowPad={rowPad}
                       />
