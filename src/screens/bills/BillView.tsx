@@ -61,14 +61,20 @@ function savePrefs(key: string, prefs: PrintPrefs) {
 }
 
 function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
-  /** Validate a saved layout — if any section id is missing from sections, fall back to default. */
+  /** Validate a saved layout — if any saved ID is missing from sections, fall back to default.
+   * New sections added since last save are appended to the first column. */
   function validateLayout(saved: LayoutState, secs: BillSection[]): LayoutState {
     const ids = new Set(secs.map((s) => s.id))
+    // If any saved ID no longer exists, the layout is stale — rebuild.
     const allPlaced = saved.cols.flat().every((id) => ids.has(id))
+    if (!allPlaced) return defaultLayout(secs)
+    // If new sections were added since last save, append them to col 0.
     const placedIds = new Set(saved.cols.flat())
-    const allPresent = secs.every((s) => placedIds.has(s.id))
-    if (!allPlaced || !allPresent) return defaultLayout(secs)
-    return saved
+    const unplaced = secs.filter((s) => !placedIds.has(s.id))
+    if (unplaced.length === 0) return saved
+    const newCols = saved.cols.map((c) => [...c])
+    newCols[0] = [...(newCols[0] ?? []), ...unplaced.map((s) => s.id)]
+    return { cols: newCols }
   }
 
   const [layout, setLayoutRaw] = React.useState<LayoutState>(() => {
@@ -79,7 +85,15 @@ function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
   const [fontSize, setFontSizeRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.fontSize ?? 13) : 13)
   const [rowPad, setRowPadRaw] = React.useState<number>(() => key ? (loadPrefs(key)?.rowPad ?? 4) : 4)
 
-  // When key changes (e.g. navigating between bills), load that bill's prefs
+  // Use refs so save functions always see the latest values without stale closures.
+  const layoutRef = React.useRef(layout)
+  const fontSizeRef = React.useRef(fontSize)
+  const rowPadRef = React.useRef(rowPad)
+  React.useLayoutEffect(() => { layoutRef.current = layout }, [layout])
+  React.useLayoutEffect(() => { fontSizeRef.current = fontSize }, [fontSize])
+  React.useLayoutEffect(() => { rowPadRef.current = rowPad }, [rowPad])
+
+  // When key changes (e.g. navigating between bills), load that bill's prefs.
   const prevKey = React.useRef(key)
   React.useEffect(() => {
     if (!key || key === prevKey.current) return
@@ -97,15 +111,33 @@ function usePrintPrefs(key: string | undefined, sections: BillSection[]) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
-  // Also re-validate when sections change (e.g. BillEditor added/removed a section).
+  // Re-validate when sections change (BillEditor added/removed a section).
+  // Skip on first render — the initial state already handles validation.
+  const mountedRef = React.useRef(false)
+  const sectionKey = sections.map((s) => s.id).join(',')
   React.useEffect(() => {
-    setLayoutRaw((prev) => validateLayout(prev, sections))
+    if (!mountedRef.current) { mountedRef.current = true; return }
+    setLayoutRaw((prev) => {
+      const next = validateLayout(prev, sections)
+      // Also persist the corrected layout so it survives a reload.
+      if (key) savePrefs(key, { layout: next, fontSize: fontSizeRef.current, rowPad: rowPadRef.current })
+      return next
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sections.map((s) => s.id).join(',')])
+  }, [sectionKey])
 
-  function setLayout(l: LayoutState) { setLayoutRaw(l); if (key) savePrefs(key, { layout: l, fontSize, rowPad }) }
-  function setFontSize(v: number) { setFontSizeRaw(v); if (key) savePrefs(key, { layout, fontSize: v, rowPad }) }
-  function setRowPad(v: number) { setRowPadRaw(v); if (key) savePrefs(key, { layout, fontSize, rowPad: v }) }
+  function setLayout(l: LayoutState) {
+    setLayoutRaw(l)
+    if (key) savePrefs(key, { layout: l, fontSize: fontSizeRef.current, rowPad: rowPadRef.current })
+  }
+  function setFontSize(v: number) {
+    setFontSizeRaw(v)
+    if (key) savePrefs(key, { layout: layoutRef.current, fontSize: v, rowPad: rowPadRef.current })
+  }
+  function setRowPad(v: number) {
+    setRowPadRaw(v)
+    if (key) savePrefs(key, { layout: layoutRef.current, fontSize: fontSizeRef.current, rowPad: v })
+  }
 
   return { layout, setLayout, fontSize, setFontSize, rowPad, setRowPad }
 }
